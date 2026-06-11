@@ -1047,6 +1047,7 @@ async def audit_callback(query, context, action: str) -> None:
         return result
 
     if action == "dashboard":
+        await query.answer()
         audit = await _cached_audit()
         text, kbd = _render_dashboard(audit)
         try:
@@ -1055,6 +1056,7 @@ async def audit_callback(query, context, action: str) -> None:
             pass
 
     elif action.startswith("section:"):
+        await query.answer()
         key   = action.split(":", 1)[1]
         audit = await _cached_audit()
         sec   = audit["sections"].get(key, {"checks": [], "status": "fail"})

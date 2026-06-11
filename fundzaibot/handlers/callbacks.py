@@ -60,7 +60,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if not admin:
             await query.answer("Admin only.", show_alert=True)
             return
-        await query.answer()
+        # Do NOT answer here — audit_callback manages its own query.answer()
+        # for every branch so progress text ("Running audit…") shows on the button.
         action = data.split("audit:", 1)[1]
         from handlers.audit import audit_callback
         await audit_callback(query, context, action)

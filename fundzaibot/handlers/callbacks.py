@@ -55,6 +55,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.answer()
         return
 
+    # ── Audit center callbacks ────────────────────────────────────────────────
+    if data.startswith("audit:"):
+        if not admin:
+            await query.answer("Admin only.", show_alert=True)
+            return
+        await query.answer()
+        action = data.split("audit:", 1)[1]
+        from handlers.audit import audit_callback
+        await audit_callback(query, context, action)
+        return
+
     # ── Announcement callbacks ────────────────────────────────────────────────
     if data.startswith("announcement:"):
         action = data.split(":", 1)[1]

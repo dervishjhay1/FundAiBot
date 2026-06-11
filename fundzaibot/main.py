@@ -51,6 +51,7 @@ from handlers.announcements import (
     pinphoto_handler, listannouncements_handler,
     announce_channel_handler, announce_group_handler, announce_both_handler,
 )
+from handlers.audit import status_handler, testaudit_handler
 from handlers.callbacks import callback_handler
 from handlers.chat import chat_handler, clear_handler
 from handlers.extras import feedback_handler, leaderboard_handler, streak_handler
@@ -123,6 +124,8 @@ async def post_init(application: Application) -> None:
         BotCommand("feedback",           "Send feedback or report a bug"),
         BotCommand("leaderboard",        "Top referrers leaderboard"),
         BotCommand("streak",             "Your daily chat streak"),
+        BotCommand("status",             "🛡️ Bot health (admin)"),
+        BotCommand("testaudit",          "🔬 Full diagnostic center (admin)"),
     ])
     log.info("Bot commands registered.")
     await queue_manager.start()
@@ -240,6 +243,10 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("announce_channel",   announce_channel_handler))
     app.add_handler(CommandHandler("announce_group",     announce_group_handler))
     app.add_handler(CommandHandler("announce_both",      announce_both_handler))
+
+    # ── Audit & monitoring (admin only) ────────────────────────────────────────
+    app.add_handler(CommandHandler("status",             status_handler))
+    app.add_handler(CommandHandler("testaudit",          testaudit_handler))
 
     # ── Inline keyboard callbacks ──────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(callback_handler))

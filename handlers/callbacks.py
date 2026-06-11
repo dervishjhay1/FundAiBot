@@ -47,7 +47,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         action = data[len("audit:"):]
         from handlers.audit import audit_callback
-        await audit_callback(query, action)
+        await audit_callback(query, context, action)
         return
 
     # ── Announcement navigator (◀ Prev / Next ▶ on announcement card) ──────────

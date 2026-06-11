@@ -49,6 +49,7 @@ from handlers.admin import (
 from handlers.announcements import (
     pin_handler, unpin_handler, updateannouncement_handler,
     pinphoto_handler, listannouncements_handler,
+    announce_channel_handler, announce_group_handler, announce_both_handler,
 )
 from handlers.callbacks import callback_handler
 from handlers.chat import chat_handler, clear_handler
@@ -58,7 +59,7 @@ from handlers.image import image_command_handler, _pending, handle_image_prompt_
 from handlers.retouch import photo_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
-from handlers.audit import testaudit_handler
+from handlers.audit import testaudit_handler, status_handler
 from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter
 from handlers.profile import profile_handler, referral_handler, history_handler, stats_handler
 from handlers.payment import subscribe_handler, precheckout_handler, successful_payment_handler
@@ -127,7 +128,8 @@ async def post_init(application: Application) -> None:
         BotCommand("feedback",    "Send feedback or report a bug"),
         BotCommand("leaderboard", "Top referrers leaderboard"),
         BotCommand("streak",      "Your daily chat streak"),
-        BotCommand("testaudit",   "🩺 Audit Center (admin only)"),
+        BotCommand("status",      "📊 Live status (admin only)"),
+        BotCommand("testaudit",   "🔬 Full diagnostic center (admin only)"),
     ])
     log.info("Bot commands registered.")
     await queue_manager.start()
@@ -236,6 +238,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("admin_onboarding",   admin_onboarding_handler))
 
     # ── Enterprise audit center (admin only) ──────────────────────────────────
+    app.add_handler(CommandHandler("status",             status_handler))
     app.add_handler(CommandHandler("testaudit",          testaudit_handler))
 
     # ── Announcements ─────────────────────────────────────────────────────────
@@ -244,6 +247,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("updateannouncement", updateannouncement_handler))
     app.add_handler(CommandHandler("pinphoto",           pinphoto_handler))
     app.add_handler(CommandHandler("listannouncements",  listannouncements_handler))
+    app.add_handler(CommandHandler("announce_channel",   announce_channel_handler))
+    app.add_handler(CommandHandler("announce_group",     announce_group_handler))
+    app.add_handler(CommandHandler("announce_both",      announce_both_handler))
 
     # ── Inline keyboard callbacks ─────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(callback_handler))

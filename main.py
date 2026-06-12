@@ -228,6 +228,7 @@ def build_app() -> Application:
 
     # ── Admin — communication ─────────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_broadcast",    admin_broadcast_handler))
+    app.add_handler(CommandHandler("broadcast",          admin_broadcast_handler))
     app.add_handler(CommandHandler("admin_dm",           admin_dm_handler))
 
     # ── Admin — multi-admin (owner only) ─────────────────────────────────────

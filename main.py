@@ -3,14 +3,15 @@ FundAiBot — Main entry point.
 
 Architecture:
   Replit  →  GitHub  →  Railway (LIVE BOT)
-  Replit is for editing + GitHub sync only.
-  Railway is the ONLY environment where Telegram polling runs.
+  Replit is for code editing + GitHub sync ONLY.
+  Railway is the SOLE environment where Telegram polling runs.
 
-Polling guard:
-  Polling starts ONLY if IS_RAILWAY is True (Railway env vars detected)
-  OR ALLOW_POLLING=true is explicitly set.
-  This prevents accidental duplicate polling sessions that cause
-  Telegram 409 Conflict errors and dropped messages.
+Deployment policy — RAILWAY ONLY:
+  Polling starts ONLY when Railway environment variables are detected (IS_RAILWAY=True).
+  The ALLOW_POLLING override has been permanently removed.
+  Any non-Railway environment (Replit, local, CI, Docker, VPS) runs Flask keep-alive
+  only and exits without starting any Telegram connection.
+  This is a hard architectural boundary — do not bypass it.
 """
 
 import asyncio
@@ -77,8 +78,8 @@ _SEPARATOR = "=" * 70
 
 
 def _print_startup_banner() -> None:
-    env_label = "🚂 RAILWAY (production)" if IS_RAILWAY else "💻 LOCAL / REPLIT (development)"
-    poll_label = "✅ YES — bot will start polling" if ALLOW_POLLING else "❌ NO — polling blocked (not on Railway)"
+    env_label  = "🚂 RAILWAY (production)" if IS_RAILWAY else "🚫 NON-RAILWAY (polling BLOCKED)"
+    poll_label = "✅ YES — Telegram polling active" if IS_RAILWAY else "❌ NO — Railway env vars not detected"
     log.info(_SEPARATOR)
     log.info("  %s  v%s", BOT_NAME, BOT_VERSION)
     log.info("  Environment : %s", env_label)
@@ -293,15 +294,19 @@ def build_app() -> Application:
 
 def _run_dev_mode() -> None:
     """
-    Dev / Replit mode: Flask keep-alive only, NO Telegram polling.
-    This prevents accidental conflicts with the Railway production instance.
+    Non-Railway mode: Flask keep-alive only — Telegram polling is PERMANENTLY BLOCKED.
+
+    This is not configurable. There is no override. Only Railway can run the bot.
+    Replit, local machines, CI, VPS, Docker — all blocked by design.
+    This prevents duplicate bot instances and Telegram 409 Conflict errors.
     """
     log.info(_SEPARATOR)
-    log.info("  DEV MODE — Telegram polling is DISABLED")
-    log.info("  Flask keep-alive will start on port %s", os.getenv("PORT", "5000"))
-    log.info("  To enable polling, set ALLOW_POLLING=true in your .env")
-    log.info("  In production: deploy to Railway — it sets RAILWAY_ENVIRONMENT")
-    log.info("  automatically and polling will be enabled.")
+    log.info("  🚫 RAILWAY-ONLY DEPLOYMENT POLICY ENFORCED")
+    log.info("  Telegram polling is BLOCKED — Railway env vars not detected.")
+    log.info("  This environment is: Replit / Local / CI / Other (not Railway).")
+    log.info("  Flask keep-alive will run on port %s (health checks only).", os.getenv("PORT", "5000"))
+    log.info("  To deploy the bot: push to GitHub → Railway auto-deploys.")
+    log.info("  DO NOT attempt to bypass this guard — it protects production.")
     log.info(_SEPARATOR)
     start_keepalive()
     mark_ready()
@@ -309,7 +314,7 @@ def _run_dev_mode() -> None:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        log.info("Dev mode stopped.")
+        log.info("Non-Railway mode stopped.")
 
 
 def main() -> None:
@@ -320,8 +325,10 @@ def main() -> None:
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    # ── If NOT on Railway and NOT explicitly allowed → dev mode only ──────────
-    if not ALLOW_POLLING:
+    # ── Railway-only guard — no override exists ───────────────────────────────
+    # ALLOW_POLLING == IS_RAILWAY (override permanently removed).
+    # Non-Railway environments run Flask keep-alive only and stop here.
+    if not IS_RAILWAY:
         _run_dev_mode()
         return
 

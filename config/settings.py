@@ -2,6 +2,13 @@
 FundAiBot — Central configuration.
 All environment variables and constants live here.
 Every other module imports from this file.
+
+DEPLOYMENT POLICY — RAILWAY ONLY:
+  Telegram polling ONLY starts when Railway environment variables are detected.
+  There is NO override mechanism. ALLOW_POLLING is permanently removed.
+  Any attempt to run the bot outside Railway will start Flask keep-alive only
+  and log a clear rejection. This prevents duplicate polling, 409 Conflicts,
+  and accidental production incidents from dev/Replit environments.
 """
 
 import os
@@ -109,18 +116,18 @@ ONBOARDING_REQUIRED: bool = os.getenv("ONBOARDING_REQUIRED", "false").lower() ==
 # Example: https://fundzaibot.up.railway.app
 BOT_WEB_URL: str = os.getenv("BOT_WEB_URL", "").rstrip("/")
 
-# ── Deployment environment detection ─────────────────────────────────────────
+# ── Deployment environment detection — RAILWAY ONLY ──────────────────────────
 #
 # Railway automatically injects these environment variables into every service.
-# None of them will be set in Replit, local dev, or any other environment.
+# None of them will be present in Replit, local dev, or any other platform.
 #
-# This is the ONLY guard that controls whether Telegram polling starts.
-# DO NOT remove or weaken this check — it prevents duplicate bot instances
-# which cause Telegram 409 Conflict errors and dropped messages.
+# ALLOW_POLLING override has been permanently removed.
+# Telegram polling starts ONLY when IS_RAILWAY is True.
+# There is NO escape hatch — this is by design to prevent duplicate instances,
+# Telegram 409 Conflict errors, and dropped messages.
 #
-# To run the bot outside Railway (e.g. local testing), set:
-#   ALLOW_POLLING=true
-# in your local .env file.  NEVER set this in the Replit environment.
+# If you need to test locally, point your local environment at a TEST bot token
+# and manually deploy to Railway. Do NOT attempt to bypass this guard.
 #
 IS_RAILWAY: bool = bool(
     os.getenv("RAILWAY_ENVIRONMENT") or      # e.g. "production"
@@ -129,11 +136,9 @@ IS_RAILWAY: bool = bool(
     os.getenv("RAILWAY_SERVICE_ID")          # UUID
 )
 
-# Explicit override — set ALLOW_POLLING=true ONLY for intentional local dev runs.
-_ALLOW_POLLING_OVERRIDE: bool = os.getenv("ALLOW_POLLING", "false").lower() == "true"
-
-# Final determination: polling is allowed if we're on Railway OR explicitly overridden.
-ALLOW_POLLING: bool = IS_RAILWAY or _ALLOW_POLLING_OVERRIDE
+# ALLOW_POLLING override is permanently disabled — Railway detection only.
+# (Kept as a constant for audit/display purposes — always False outside Railway.)
+ALLOW_POLLING: bool = IS_RAILWAY
 
 # ── Validation ────────────────────────────────────────────────────────────────
 def validate_config() -> list[str]:

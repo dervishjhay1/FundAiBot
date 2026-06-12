@@ -52,6 +52,10 @@ from handlers.announcements import (
     pinphoto_handler, listannouncements_handler,
     announce_channel_handler, announce_group_handler, announce_both_handler,
 )
+from handlers.ai_commands import (
+    ask_handler, code_handler, summarize_handler, translate_handler,
+    analyze_handler, model_handler, testbroadcast_handler,
+)
 from handlers.callbacks import callback_handler
 from handlers.chat import chat_handler, clear_handler
 from handlers.extras import feedback_handler, leaderboard_handler, streak_handler
@@ -113,24 +117,36 @@ def _bootstrap_onboarding_schema() -> None:
 async def post_init(application: Application) -> None:
     """Register bot commands and start background services after bot connects."""
     await application.bot.set_my_commands([
+        # ── Core ──────────────────────────────────────────────────────────────
         BotCommand("start",       "Open the main menu"),
-        BotCommand("help",        "Help guide"),
+        BotCommand("help",        "Full help guide"),
         BotCommand("about",       "About FundzAiBot"),
-        BotCommand("chat",        "AI conversation"),
+        # ── AI Chat ───────────────────────────────────────────────────────────
+        BotCommand("chat",        "AI conversation (with memory)"),
+        BotCommand("ask",         "Quick one-shot question (no memory)"),
+        BotCommand("code",        "Code generation & debugging — Replit AI mode"),
+        BotCommand("summarize",   "Summarize text or a replied message"),
+        BotCommand("translate",   "Translate to any language"),
+        BotCommand("analyze",     "Analyze a photo with Gemini Vision"),
+        # ── Models & Style ────────────────────────────────────────────────────
+        BotCommand("model",       "Switch AI model: GPT-4o, Claude, Gemini…"),
+        BotCommand("style",       "Change AI personality (8 modes)"),
+        BotCommand("clear",       "Clear conversation memory"),
+        # ── Images ────────────────────────────────────────────────────────────
         BotCommand("image",       "Generate an AI image"),
-        BotCommand("style",       "Change AI personality"),
+        # ── Account ───────────────────────────────────────────────────────────
         BotCommand("language",    "Change bot language"),
         BotCommand("subscribe",   "⭐ VIP plans & Telegram Stars"),
         BotCommand("profile",     "Your profile & credits"),
         BotCommand("stats",       "Your usage statistics"),
         BotCommand("referral",    "Referral link & rewards"),
         BotCommand("history",     "Image generation history"),
-        BotCommand("clear",       "Clear conversation memory"),
         BotCommand("feedback",    "Send feedback or report a bug"),
         BotCommand("leaderboard", "Top referrers leaderboard"),
         BotCommand("streak",      "Your daily chat streak"),
-        BotCommand("status",      "📊 Live status (admin only)"),
-        BotCommand("testaudit",   "🔬 Full diagnostic center (admin only)"),
+        # ── Admin ─────────────────────────────────────────────────────────────
+        BotCommand("status",      "📊 Live status (admin)"),
+        BotCommand("testaudit",   "🔬 Full diagnostic center (admin)"),
     ])
     log.info("Bot commands registered.")
     await queue_manager.start()
@@ -192,7 +208,15 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("image",       image_command_handler))
     app.add_handler(CommandHandler("style",       style_handler))
     app.add_handler(CommandHandler("language",    language_handler))
+    app.add_handler(CommandHandler("model",       model_handler))
     app.add_handler(CommandHandler("subscribe",   subscribe_handler))
+
+    # ── Extended AI commands ────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("ask",         ask_handler))
+    app.add_handler(CommandHandler("code",        code_handler))
+    app.add_handler(CommandHandler("summarize",   summarize_handler))
+    app.add_handler(CommandHandler("translate",   translate_handler))
+    app.add_handler(CommandHandler("analyze",     analyze_handler))
     app.add_handler(CommandHandler("profile",     profile_handler))
     app.add_handler(CommandHandler("stats",       stats_handler))
     app.add_handler(CommandHandler("referral",    referral_handler))
@@ -229,6 +253,7 @@ def build_app() -> Application:
     # ── Admin — communication ─────────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_broadcast",    admin_broadcast_handler))
     app.add_handler(CommandHandler("broadcast",          admin_broadcast_handler))
+    app.add_handler(CommandHandler("testbroadcast",      testbroadcast_handler))
     app.add_handler(CommandHandler("admin_dm",           admin_dm_handler))
 
     # ── Admin — multi-admin (owner only) ─────────────────────────────────────

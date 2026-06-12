@@ -774,6 +774,163 @@ def check_error_logs() -> dict:
     return _section("logs", checks)
 
 
+def check_languages() -> dict:
+    """Verify multi-language system — locale files, STRINGS dict, supported codes."""
+    checks = []
+
+    try:
+        from services.language import (
+            ALL_LANGUAGES, FREE_LANGUAGES, VIP_LANGUAGES,
+            STRINGS, DEFAULT_LANGUAGE,
+        )
+        total = len(ALL_LANGUAGES)
+        free  = len(FREE_LANGUAGES)
+        vip   = len(VIP_LANGUAGES)
+        checks.append(_ok("Language catalogue",
+                          f"✅ {total} languages — {free} free, {vip} VIP"))
+        checks.append(_ok("Free languages",
+                          f"✅ {', '.join(FREE_LANGUAGES)}"))
+        checks.append(_ok("VIP languages",
+                          f"✅ {', '.join(VIP_LANGUAGES)}"))
+        checks.append(_ok("Default language",
+                          f"✅ '{DEFAULT_LANGUAGE}'"))
+
+        # Check locale JSON files
+        import os
+        locales_dir = os.path.join(os.path.dirname(__file__), "..", "locales")
+        missing_json = []
+        for code in ALL_LANGUAGES:
+            path = os.path.join(locales_dir, f"{code}.json")
+            if not os.path.exists(path):
+                missing_json.append(code)
+        if missing_json:
+            checks.append(_warn("Locale JSON files",
+                                f"⚠️ Missing: {', '.join(missing_json)}",
+                                "Add locale JSON files to /locales/"))
+        else:
+            checks.append(_ok("Locale JSON files",
+                               f"✅ All {total} locale JSON files present"))
+
+        # Spot-check critical keys in STRINGS
+        critical_keys = ["welcome_back", "welcome_new", "maintenance",
+                         "choose_language", "language_set"]
+        missing_keys = []
+        for lang in ALL_LANGUAGES:
+            lang_strings = STRINGS.get(lang, {})
+            for key in critical_keys:
+                if not lang_strings.get(key):
+                    # Locale JSON might cover it — check there
+                    import json
+                    path = os.path.join(locales_dir, f"{lang}.json")
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            locale_data = json.load(f)
+                        if not locale_data.get(key):
+                            missing_keys.append(f"{lang}.{key}")
+                    except Exception:
+                        missing_keys.append(f"{lang}.{key}")
+        if missing_keys:
+            checks.append(_warn("Translation coverage",
+                                f"⚠️ {len(missing_keys)} missing keys",
+                                ", ".join(missing_keys[:5])))
+        else:
+            checks.append(_ok("Translation coverage",
+                               f"✅ All critical keys translated in all {total} languages"))
+
+    except ImportError as exc:
+        checks.append(_crit("Language service", f"❌ Import error: {exc}"))
+    except Exception as exc:
+        checks.append(_warn("Language check", f"⚠️ {str(exc)[:80]}"))
+
+    return _section("languages", checks)
+
+
+def check_integrations() -> dict:
+    """Verify external service integrations — API keys and basic reachability."""
+    checks = []
+
+    try:
+        import requests as _req
+
+        # OpenRouter
+        from config.settings import OPENROUTER_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY
+        if OPENROUTER_API_KEY:
+            checks.append(_ok("OpenRouter API key", "✅ Key configured"))
+        else:
+            checks.append(_warn("OpenRouter API key", "⚠️ Not set",
+                                 "Set OPENROUTER_API_KEY in Railway"))
+
+        # Gemini
+        if GEMINI_API_KEY:
+            checks.append(_ok("Gemini API key", "✅ Key configured"))
+        else:
+            checks.append(_warn("Gemini API key", "⚠️ Not set",
+                                 "Set GEMINI_API_KEY in Railway"))
+
+        # HuggingFace
+        if HUGGINGFACE_API_KEY:
+            checks.append(_ok("HuggingFace API key", "✅ Key configured"))
+        else:
+            checks.append(_warn("HuggingFace API key", "⚠️ Not set — image gen disabled",
+                                 "Set HUGGINGFACE_API_KEY in Railway"))
+
+        # Count how many AI providers are live
+        live = sum(bool(k) for k in [OPENROUTER_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY])
+        if live == 0:
+            checks.append(_crit("AI provider count",
+                                 "❌ No AI providers configured — bot is non-functional"))
+        elif live == 1:
+            checks.append(_warn("AI provider count",
+                                 f"⚠️ Only {live}/3 provider configured — limited redundancy"))
+        else:
+            checks.append(_ok("AI provider count", f"✅ {live}/3 providers active"))
+
+        # Supabase connectivity (fast reachability check)
+        from config.settings import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            try:
+                r = _req.get(
+                    f"{SUPABASE_URL}/rest/v1/",
+                    headers={"apikey": SUPABASE_SERVICE_KEY,
+                             "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"},
+                    timeout=(3, 6),
+                )
+                if r.status_code in (200, 404):
+                    checks.append(_ok("Supabase REST", "✅ Reachable"))
+                else:
+                    checks.append(_warn("Supabase REST", f"⚠️ HTTP {r.status_code}"))
+            except Exception as exc:
+                checks.append(_warn("Supabase REST", f"⚠️ Unreachable: {str(exc)[:50]}"))
+        else:
+            checks.append(_crit("Supabase config",
+                                 "❌ SUPABASE_URL or SUPABASE_SERVICE_KEY not set"))
+
+        # Telegram Bot API reachability
+        try:
+            from config.settings import BOT_TOKEN
+            if BOT_TOKEN:
+                r = _req.get(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/getMe",
+                    timeout=(4, 8),
+                )
+                if r.status_code == 200 and r.json().get("ok"):
+                    uname = r.json()["result"].get("username", "?")
+                    checks.append(_ok("Telegram Bot API", f"✅ @{uname} reachable"))
+                else:
+                    checks.append(_warn("Telegram Bot API",
+                                        f"⚠️ HTTP {r.status_code}",
+                                        "Check BOT_TOKEN"))
+            else:
+                checks.append(_crit("Telegram Bot API", "❌ BOT_TOKEN not set"))
+        except Exception as exc:
+            checks.append(_warn("Telegram Bot API", f"⚠️ {str(exc)[:60]}"))
+
+    except Exception as exc:
+        checks.append(_warn("Integrations check", f"⚠️ {str(exc)[:80]}"))
+
+    return _section("integrations", checks)
+
+
 # ── Section titles & runners ──────────────────────────────────────────────────
 
 SECTION_TITLES: dict[str, str] = {
@@ -789,6 +946,8 @@ SECTION_TITLES: dict[str, str] = {
     "announcements": "📌 Announcements",
     "security":      "🔒 Security",
     "logs":          "📋 Error Logs",
+    "languages":     "🌍 Languages",
+    "integrations":  "⚙️ Integrations",
 }
 
 SECTION_RUNNERS: dict = {
@@ -804,6 +963,8 @@ SECTION_RUNNERS: dict = {
     "announcements": check_announcements,
     "security":      check_security,
     "logs":          check_error_logs,
+    "languages":     check_languages,
+    "integrations":  check_integrations,
 }
 
 

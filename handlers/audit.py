@@ -1359,6 +1359,8 @@ async def audit_callback(query, context, action: str) -> None:
             "announcements": _audit_announcements,
             "security":      _audit_security,
             "error_logs":    _audit_error_logs,
+            "languages":     _audit_languages,
+            "integrations":  _audit_integrations,
         }.get(key)
 
         if runner:
@@ -1504,7 +1506,7 @@ async def testaudit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     msg = await update.effective_message.reply_text(
         "⏳ <b>Running full audit…</b>\n\n"
-        "<i>Checking all 12 systems concurrently…</i>",
+        "<i>Checking all 14 systems concurrently…</i>",
         parse_mode="HTML",
     )
 

@@ -368,3 +368,82 @@ def check_provider_health() -> dict[str, str]:
             statuses["DB (Supabase)"] = f"❌ DB error: {err[:120]}"
 
     return statuses
+
+
+# ── Gemini Vision — Image Analysis ────────────────────────────────────────────
+
+def analyze_image_gemini(image_bytes: bytes, mime_type: str, question: str) -> str:
+    """
+    Analyze an image using Gemini Vision (gemini-1.5-flash).
+    Returns the AI's textual description / answer.
+    Synchronous — always call via run_in_executor from async handlers.
+
+    Args:
+        image_bytes: Raw image bytes (JPEG, PNG, WEBP, etc.)
+        mime_type:   MIME type string, e.g. "image/jpeg"
+        question:    What to ask about the image; falls back to a generic description prompt.
+    """
+    import base64
+
+    if not GEMINI_API_KEY:
+        return (
+            "⚠️ <b>Image analysis requires GEMINI_API_KEY.</b>\n\n"
+            "Add it to your Railway environment variables."
+        )
+
+    vision_model = "gemini-1.5-flash"
+    url = f"{_GEMINI_BASE}/{vision_model}:generateContent?key={GEMINI_API_KEY}"
+
+    contents = [
+        {
+            "parts": [
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(image_bytes).decode(),
+                    }
+                },
+                {"text": question or "Describe this image in detail."},
+            ]
+        }
+    ]
+
+    try:
+        resp = requests.post(
+            url,
+            json={
+                "contents": contents,
+                "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.4},
+            },
+            timeout=(10, AI_TIMEOUT),
+        )
+
+        if resp.status_code == 400:
+            log.warning("Gemini Vision 400: %s", resp.text[:200])
+            return "⚠️ Could not analyse this image — it may be unsupported format or too large."
+        if resp.status_code == 403:
+            log.warning("Gemini Vision 403: API key restricted")
+            return "⚠️ Gemini API key is invalid or restricted. Check GEMINI_API_KEY in Railway."
+        if resp.status_code == 429:
+            log.warning("Gemini Vision 429: quota exceeded")
+            return "⚠️ Gemini quota exceeded. Try again in a moment."
+        resp.raise_for_status()
+
+        data       = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return "⚠️ Gemini returned no analysis (response may have been filtered)."
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            return "⚠️ Gemini returned an empty analysis."
+        return (parts[0].get("text", "") or "").strip()
+
+    except requests.Timeout:
+        log.warning("Gemini Vision: request timed out")
+        return "⚠️ Image analysis timed out. Please try again."
+    except requests.ConnectionError as exc:
+        log.warning("Gemini Vision: connection error — %s", exc)
+        return "⚠️ Could not reach Gemini. Check Railway network connectivity."
+    except Exception as exc:
+        log.error("Gemini Vision unexpected error: %s", exc)
+        return f"⚠️ Analysis failed: {str(exc)[:120]}"

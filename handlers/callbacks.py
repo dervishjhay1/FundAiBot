@@ -110,6 +110,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await handle_retouch_callback(update, context, mode)
         return
 
+    # ── AI model selection ────────────────────────────────────────────────────
+    if data.startswith("setmodel:"):
+        from handlers.ai_commands import handle_setmodel_callback
+        await handle_setmodel_callback(query, user.id)
+        return
+
     # ── Language detection (first-start prompt) ─────────────────────────────
     if data.startswith("lang_detect:"):
         action = data.split(":", 1)[1]

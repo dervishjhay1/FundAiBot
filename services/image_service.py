@@ -1,11 +1,16 @@
 """
 FundAiBot — AI image generation service.
-Uses HuggingFace Inference API (Stable Diffusion XL).
-Handles cold-start 503s with automatic retry.
+
+Provider priority (Railway-compatible):
+  1. Pollinations.ai  — free, no API key, GET request, works from any network
+  2. HuggingFace      — fallback (may be blocked on Railway; used when available)
+
+All functions are SYNCHRONOUS — call via run_in_executor from async handlers.
 """
 
 import io
 import time
+from urllib.parse import quote
 
 import requests
 
@@ -28,32 +33,74 @@ NEGATIVE_PROMPT = (
     "signature, nsfw, nude, explicit, violence, gore"
 )
 
-_MAX_RETRIES     = 2
-_COLD_START_WAIT = 20   # seconds to wait on 503 cold-start
+_HF_MAX_RETRIES     = 2
+_HF_COLD_START_WAIT = 20
 
 
-def generate_image(
-    prompt: str, style: str = "realistic", model: str = DEFAULT_IMAGE_MODEL
-) -> io.BytesIO | None:
+# ── Provider 1: Pollinations.ai ───────────────────────────────────────────────
+
+def _pollinations(full_prompt: str) -> io.BytesIO | None:
     """
-    Generate an image. Returns a BytesIO buffer ready for Telegram send_photo, or None on failure.
-    Retries once on HuggingFace 503 (model cold-start).
+    Generate an image via Pollinations.ai.
+    - No API key required
+    - Plain GET request → JPEG bytes
+    - Works from Railway and any other network
+    - Model: FLUX (best quality free model as of 2025)
     """
-    if not HUGGINGFACE_API_KEY:
-        log.warning("No HUGGINGFACE_API_KEY — image generation skipped")
+    url = (
+        f"https://image.pollinations.ai/prompt/{quote(full_prompt)}"
+        "?width=1024&height=1024&model=flux&nologo=true&enhance=false"
+    )
+    try:
+        resp = requests.get(url, timeout=IMAGE_TIMEOUT, allow_redirects=True)
+        resp.raise_for_status()
+
+        content_type = resp.headers.get("content-type", "")
+        if "image" not in content_type:
+            log.warning(
+                "Pollinations unexpected content-type: %s — body: %s",
+                content_type, resp.text[:120],
+            )
+            return None
+
+        buf = io.BytesIO(resp.content)
+        buf.name = "image.jpg"
+        buf.seek(0)
+        log.info("Pollinations image OK (%d KB)", len(resp.content) // 1024)
+        return buf
+
+    except requests.Timeout:
+        log.warning("Pollinations timed out after %ds", IMAGE_TIMEOUT)
+        return None
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response else "?"
+        log.warning("Pollinations HTTP %s", code)
+        return None
+    except requests.ConnectionError as exc:
+        log.warning("Pollinations connection error: %s", str(exc)[:80])
+        return None
+    except Exception as exc:
+        log.error("Pollinations unexpected error: %s", exc)
         return None
 
-    prefix      = STYLE_PREFIXES.get(style, "")
-    full_prompt = f"{prefix}{prompt}"
 
-    log.info("Image gen — style=%s model=%s prompt=%s", style, model, prompt[:80])
+# ── Provider 2: HuggingFace (fallback) ───────────────────────────────────────
+
+def _huggingface_image(full_prompt: str, model: str) -> io.BytesIO | None:
+    """
+    Generate an image via HuggingFace Inference API (Stable Diffusion XL).
+    May be unreachable from Railway's network — used as fallback only.
+    """
+    if not HUGGINGFACE_API_KEY:
+        log.debug("HuggingFace image skipped — no HUGGINGFACE_API_KEY")
+        return None
 
     url     = f"https://api-inference.huggingface.co/models/{model}"
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {
         "inputs": full_prompt,
         "parameters": {
-            "negative_prompt":    NEGATIVE_PROMPT,
+            "negative_prompt":     NEGATIVE_PROMPT,
             "num_inference_steps": 30,
             "guidance_scale":      7.5,
             "width":  1024,
@@ -61,61 +108,85 @@ def generate_image(
         },
     }
 
-    for attempt in range(_MAX_RETRIES):
+    for attempt in range(_HF_MAX_RETRIES):
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=IMAGE_TIMEOUT)
 
-            # HuggingFace 503 = model is loading (cold start) — retry after wait
             if resp.status_code == 503:
                 try:
-                    estimated = resp.json().get("estimated_time", _COLD_START_WAIT)
+                    wait = min(float(resp.json().get("estimated_time", _HF_COLD_START_WAIT)), _HF_COLD_START_WAIT)
                 except Exception:
-                    estimated = _COLD_START_WAIT
-                wait = min(float(estimated), _COLD_START_WAIT)
-                log.warning(
-                    "HuggingFace image model loading — waiting %.0fs (attempt %d/%d)",
-                    wait, attempt + 1, _MAX_RETRIES,
-                )
-                if attempt < _MAX_RETRIES - 1:
+                    wait = _HF_COLD_START_WAIT
+                log.warning("HuggingFace image model loading — waiting %.0fs (attempt %d/%d)", wait, attempt + 1, _HF_MAX_RETRIES)
+                if attempt < _HF_MAX_RETRIES - 1:
                     time.sleep(wait)
                     continue
-                log.warning("HuggingFace still loading after %d attempts — giving up", _MAX_RETRIES)
                 return None
 
             resp.raise_for_status()
 
             content_type = resp.headers.get("content-type", "")
             if "image" not in content_type:
-                log.warning(
-                    "Unexpected HuggingFace content-type: %s — body: %s",
-                    content_type, resp.text[:200],
-                )
+                log.warning("HuggingFace unexpected content-type: %s — body: %s", content_type, resp.text[:120])
                 return None
 
             buf = io.BytesIO(resp.content)
             buf.name = "image.png"
             buf.seek(0)
-            log.info("Image generated successfully (%d KB)", len(resp.content) // 1024)
+            log.info("HuggingFace image OK (%d KB)", len(resp.content) // 1024)
             return buf
 
         except requests.HTTPError as exc:
             code = exc.response.status_code if exc.response else "?"
-            body = (exc.response.text[:200] if exc.response else "") or ""
-            log.warning("HuggingFace HTTP %s: %s | body: %s", code, exc, body)
+            log.warning("HuggingFace HTTP %s (attempt %d/%d)", code, attempt + 1, _HF_MAX_RETRIES)
             return None
         except requests.Timeout:
-            log.warning(
-                "Image generation timed out after %ds (attempt %d/%d)",
-                IMAGE_TIMEOUT, attempt + 1, _MAX_RETRIES,
-            )
-            if attempt < _MAX_RETRIES - 1:
+            log.warning("HuggingFace timed out (attempt %d/%d)", attempt + 1, _HF_MAX_RETRIES)
+            if attempt < _HF_MAX_RETRIES - 1:
                 continue
             return None
         except requests.ConnectionError as exc:
-            log.error("HuggingFace connection error (network/DNS): %s", exc)
+            log.warning("HuggingFace connection error (likely Railway network restriction): %s", str(exc)[:80])
             return None
         except Exception as exc:
-            log.error("Image generation unexpected error: %s", exc, exc_info=True)
+            log.error("HuggingFace unexpected error: %s", exc, exc_info=True)
             return None
 
+    return None
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def generate_image(
+    prompt: str,
+    style: str = "realistic",
+    model: str = DEFAULT_IMAGE_MODEL,
+) -> io.BytesIO | None:
+    """
+    Generate an image. Returns BytesIO (ready for Telegram send_photo) or None.
+
+    Provider chain:
+      1. Pollinations.ai  — free, Railway-compatible, no API key
+      2. HuggingFace      — fallback (may be blocked on Railway)
+
+    Synchronous — always call via run_in_executor() from async code.
+    """
+    prefix      = STYLE_PREFIXES.get(style, "")
+    full_prompt = f"{prefix}{prompt}"
+
+    log.info("Image gen start — style=%s prompt=%s", style, prompt[:80])
+
+    # ── 1. Pollinations.ai (primary, works on Railway) ──────────────────────
+    result = _pollinations(full_prompt)
+    if result:
+        return result
+
+    log.warning("Pollinations failed — trying HuggingFace fallback")
+
+    # ── 2. HuggingFace (may be blocked on Railway) ───────────────────────────
+    result = _huggingface_image(full_prompt, model)
+    if result:
+        return result
+
+    log.error("All image providers failed for prompt: %s", prompt[:80])
     return None

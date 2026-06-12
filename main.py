@@ -155,21 +155,63 @@ async def post_init(application: Application) -> None:
 
 
 async def error_handler(update, context) -> None:
-    """Global error handler — logs all unhandled exceptions."""
+    """
+    Global error handler — three tiers:
+
+    1. 'Message is not modified' (BadRequest) → silently ignored.
+       This is a harmless Telegram quirk when a callback button is tapped twice
+       and the resulting edit_message_text sends identical content.
+
+    2. Transient infrastructure errors (Bad Gateway, NetworkError, TimedOut,
+       httpx.ReadError, connection resets) → logged at WARNING, NOT written to DB.
+       These are Railway/Telegram blips, not real application bugs.
+
+    3. Everything else → logged as ERROR, written to Supabase error log.
+    """
+    from telegram.error import BadRequest, NetworkError, TimedOut
     from services.database import log_error
+
+    exc = context.error
+    err = str(exc)
+
+    # ── Tier 1: harmless "Message is not modified" ────────────────────────────
+    if isinstance(exc, BadRequest) and "message is not modified" in err.lower():
+        uid = update.effective_user.id if update and update.effective_user else "?"
+        log.debug("Suppressed 'Message is not modified' for user %s", uid)
+        return
+
+    # ── Tier 2: transient infrastructure / network errors ────────────────────
+    _transient_strings = (
+        "bad gateway",
+        "httpx.readerror",
+        "read error",
+        "connection reset by peer",
+        "connection aborted",
+        "remotedisconnected",
+        "connection refused",
+    )
+    is_transient = (
+        isinstance(exc, (NetworkError, TimedOut))
+        or any(s in err.lower() for s in _transient_strings)
+    )
+    if is_transient:
+        log.warning("Transient infra error (skipped DB write): %.120s", err)
+        return
+
+    # ── Tier 3: real application errors ───────────────────────────────────────
     user_id = None
     if update and update.effective_user:
         user_id = update.effective_user.id
 
-    err = str(context.error)
-    log.error("Unhandled error for user %s: %s", user_id, err, exc_info=context.error)
+    log.error("Unhandled error — user=%s: %s", user_id, err, exc_info=exc)
 
     try:
-        log_error("unhandled_exception", err, user_id=user_id)
+        log_error("unhandled_exception", err[:500], user_id=user_id)
     except Exception:
         pass
 
-    if update and update.effective_message:
+    # Only try to reply when we have an actual user message (not a callback ghost)
+    if update and update.effective_message and not (update.callback_query):
         try:
             await update.effective_message.reply_text(
                 "⚠️ Something went wrong. Please try again in a moment."

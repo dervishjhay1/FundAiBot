@@ -278,3 +278,189 @@ async def listannouncements_handler(update: Update, context: ContextTypes.DEFAUL
         parse_mode="HTML",
         reply_markup=back_to_menu(),
     )
+
+
+# ── /announce_channel ─────────────────────────────────────────────────────────
+
+async def announce_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_channel — Push the active announcement to the Telegram channel."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_CHANNEL_ID
+    if not TELEGRAM_CHANNEL_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>TELEGRAM_CHANNEL_ID is not set.</b>\n\n"
+            "Add it to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+
+    try:
+        if photo_url:
+            await context.bot.send_photo(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        await update.effective_message.reply_text(
+            "✅ <b>Announcement sent to channel!</b>",
+            parse_mode="HTML",
+        )
+        log.info("Announcement pushed to channel by admin %s", user.id)
+    except Exception as exc:
+        await update.effective_message.reply_text(
+            f"❌ Failed to send to channel:\n<code>{html.escape(str(exc))}</code>\n\n"
+            "Make sure the bot is an admin in the channel.",
+            parse_mode="HTML",
+        )
+        log.error("announce_channel: %s", exc)
+
+
+# ── /announce_group ───────────────────────────────────────────────────────────
+
+async def announce_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_group — Push the active announcement to the Telegram group."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_GROUP_ID
+    if not TELEGRAM_GROUP_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>TELEGRAM_GROUP_ID is not set.</b>\n\n"
+            "Add it to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+
+    try:
+        if photo_url:
+            await context.bot.send_photo(
+                chat_id=TELEGRAM_GROUP_ID,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=TELEGRAM_GROUP_ID,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        await update.effective_message.reply_text(
+            "✅ <b>Announcement sent to group!</b>",
+            parse_mode="HTML",
+        )
+        log.info("Announcement pushed to group by admin %s", user.id)
+    except Exception as exc:
+        await update.effective_message.reply_text(
+            f"❌ Failed to send to group:\n<code>{html.escape(str(exc))}</code>\n\n"
+            "Make sure the bot is an admin in the group.",
+            parse_mode="HTML",
+        )
+        log.error("announce_group: %s", exc)
+
+
+# ── /announce_both ────────────────────────────────────────────────────────────
+
+async def announce_both_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_both — Push the active announcement to both channel and group."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID
+    if not TELEGRAM_CHANNEL_ID and not TELEGRAM_GROUP_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>Neither TELEGRAM_CHANNEL_ID nor TELEGRAM_GROUP_ID is set.</b>\n\n"
+            "Add them to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+    results   = []
+
+    for label, chat_id in [("channel", TELEGRAM_CHANNEL_ID), ("group", TELEGRAM_GROUP_ID)]:
+        if not chat_id:
+            results.append(f"⏭️ {label.capitalize()}: skipped (ID not configured)")
+            continue
+        try:
+            if photo_url:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_url,
+                    caption=card,
+                    parse_mode="HTML",
+                    reply_markup=announcement_keyboard(SUPPORT_URL),
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=card,
+                    parse_mode="HTML",
+                    reply_markup=announcement_keyboard(SUPPORT_URL),
+                )
+            results.append(f"✅ {label.capitalize()}: sent")
+            log.info("Announcement pushed to %s by admin %s", label, user.id)
+        except Exception as exc:
+            results.append(f"❌ {label.capitalize()}: {html.escape(str(exc))}")
+            log.error("announce_both → %s: %s", label, exc)
+
+    await update.effective_message.reply_text(
+        "<b>📢 Broadcast Results:</b>\n\n" + "\n".join(results),
+        parse_mode="HTML",
+    )

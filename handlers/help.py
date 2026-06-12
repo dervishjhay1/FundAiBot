@@ -14,66 +14,100 @@ log = get_logger(__name__)
 HELP_TEXT = """
 <b>🤖 {bot} — Help Guide</b>
 
-<b>Core Commands:</b>
-/start    — Main menu
-/chat     — AI conversation
-/image    — Generate an image
-/style    — Change AI personality
-/profile  — Your stats & credits
-/referral — Referral link & rewards
-/history  — Image generation history
-/clear    — Clear chat memory
-/help     — This help guide
-/about    — About {bot}
+<b>💬 AI Chat & Q&A:</b>
+/chat      — Persistent AI conversation (with memory)
+/ask       — Quick one-shot question (no memory)
+/clear     — Clear your conversation history
 
-<b>💬 AI Chat:</b>
-Just send any message — I'll reply intelligently!
-Or tap 🤖 AI Chat from the menu.
+<b>🧑‍💻 Code Assistant (Replit AI mode):</b>
+/code      — Generate, explain, or debug code
+<code>/code Python function to sort a dict by value</code>
+<code>/code Debug: why does this crash?</code>
+
+<b>📝 Text Tools:</b>
+/summarize — Summarize text or a replied-to message
+/translate — Translate to any language
+<code>/translate Spanish Good morning, how are you?</code>
+<code>/translate French</code>  (reply to a message)
+
+<b>🔍 Vision (Gemini):</b>
+/analyze   — Analyze a photo (reply or send with caption)
+<code>/analyze What does the text say?</code>
+<code>/analyze Describe this image in detail</code>
 
 <b>🎨 Image Generation:</b>
-<code>/image a sunset over the ocean, dramatic lighting</code>
-Or tap 🎨 Image Gen and choose a style first.
+/image     — Generate an AI image from a prompt
+<code>/image a cyberpunk city at night, neon lights</code>
 
-<b>🎭 AI Styles (8 modes):</b>
+<b>🤖 AI Models:</b>
+/model     — Switch between GPT-4o, Claude, Gemini & more
+/style     — Change AI personality (8 modes)
+
+<b>🎭 8 AI Styles:</b>
 🧠 Default · 📚 Teacher · 😂 Comedian · 🔬 Scientist
 📝 Writer · 💼 Business · 🧑‍💻 Coder · 🎭 Creative
 
-<b>💳 Daily Limits (Free):</b>
+<b>👤 Your Account:</b>
+/start     — Main menu
+/profile   — Your stats &amp; credits
+/stats     — Usage statistics
+/referral  — Referral link &amp; rewards
+/history   — Image generation history
+/language  — Change bot language
+/subscribe — ⭐ VIP plans
+/streak    — Daily chat streak
+
+<b>💳 Free Daily Limits:</b>
 • 30 AI chat messages / day
 • 5 image generations / day
 • Resets at midnight UTC
 
 <b>💎 VIP Benefits:</b>
 • 500 chats + 50 images / day (Basic)
-• Unlimited + priority (Pro / Elite)
+• 2000 chats + priority (Pro)
+• Unlimited + custom AI (Elite)
 
 <b>🔗 Earn Bonus Credits:</b>
-Invite friends with /referral → +10 chats & +2 images per referral!
+/referral → +10 chats &amp; +2 images per friend invited!
 """
 
 ABOUT_TEXT = """
 <b>ℹ️ About {bot}</b>  <code>v{version}</code>
 
-<b>FundAiBot</b> is a premium AI assistant platform built inside Telegram, powered by the world's most advanced language and image models.
+<b>{bot}</b> is a premium all-in-one AI platform inside Telegram — the power of ChatGPT, Gemini, Replit AI, and Claude, combined in one bot.
 
-<b>🧠 AI Chat Providers:</b>
-• <b>OpenRouter</b> — GPT-4, Claude, Mixtral & more
-• <b>Google Gemini</b> — Gemini Pro
-• <b>HuggingFace</b> — Mistral 7B (fallback)
+<b>🧠 AI Language Models:</b>
+• <b>GPT-4o / GPT-4o Mini</b> — OpenAI via OpenRouter
+• <b>Claude 3.5 Sonnet / Haiku</b> — Anthropic via OpenRouter
+• <b>Gemini Flash 1.5</b> — Google via OpenRouter
+• <b>Mistral 7B / Llama 3.1</b> — Free models via OpenRouter
+• <b>DeepSeek Chat</b> — Cost-efficient via OpenRouter
+• <b>Gemini Pro</b> — Google (direct fallback)
+• <b>Mistral 7B</b> — HuggingFace (final fallback)
+
+<b>👁️ Vision (Image Understanding):</b>
+• <b>Gemini Vision</b> — analyze any photo with /analyze
 
 <b>🎨 Image Generation:</b>
 • <b>Stable Diffusion XL</b> via HuggingFace
 • 6 artistic styles supported
 
 <b>✅ Platform Features:</b>
-• Smart conversation memory
-• 8 AI personality modes
+• Multi-model AI chat with memory
+• One-shot Q&amp;A (/ask)
+• Code generation &amp; debugging (/code)
+• Text summarization (/summarize)
+• Real-time translation (/translate)
+• Image analysis — Gemini Vision (/analyze)
+• AI model switcher (/model)
+• 8 AI personality modes (/style)
 • Prompt enhancement system
 • Daily credit wallet
 • Referral reward system
-• VIP subscription tiers
+• VIP subscription tiers (Telegram Stars)
 • Full admin dashboard
-• Supabase-powered storage
+• Multi-language support (8 languages)
+• Supabase-powered persistent storage
 • Railway-deployed, GitHub-synced
 
 <b>Built for scale. Designed for you.</b>

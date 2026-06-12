@@ -285,13 +285,18 @@ def check_provider_health() -> dict[str, str]:
                     + (f" ({usage_label})" if usage_label else "")
                 )
             elif r.status_code == 401:
-                statuses["OpenRouter"] = "❌ Invalid API key (401)"
+                statuses["OpenRouter"] = "❌ Invalid API key (401) — re-check OPENROUTER_API_KEY in Railway"
             elif r.status_code == 402:
                 statuses["OpenRouter"] = "⚠️ No credits (402) — top up at openrouter.ai/credits"
             elif r.status_code == 403:
-                statuses["OpenRouter"] = "❌ API key forbidden (403)"
+                statuses["OpenRouter"] = "❌ API key forbidden (403) — check key permissions"
+            elif r.status_code == 404:
+                statuses["OpenRouter"] = (
+                    "❌ Key not found (404) — OPENROUTER_API_KEY may be wrong or deleted. "
+                    "Generate a new key at openrouter.ai/keys"
+                )
             else:
-                statuses["OpenRouter"] = f"⚠️ HTTP {r.status_code}"
+                statuses["OpenRouter"] = f"⚠️ HTTP {r.status_code} — unexpected response from OpenRouter"
         except requests.Timeout:
             statuses["OpenRouter"] = "⚠️ Timeout — check Railway outbound rules"
         except requests.ConnectionError:

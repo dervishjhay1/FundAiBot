@@ -117,7 +117,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await handle_lang_detect_callback(query, user.id, action, context)
         return
 
-        # ── Language selection ────────────────────────────────────────────────────
+    # ── Language selection ────────────────────────────────────────────────────
     if data.startswith("lang:"):
         from handlers.language import handle_language_callback
         await handle_language_callback(query, user.id, context)

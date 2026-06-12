@@ -61,6 +61,8 @@ SECTION_META = {
     "announcements":  ("📌", "Announcements"),
     "security":       ("🔒", "Security"),
     "error_logs":     ("📋", "Error Logs"),
+    "languages":      ("🌍", "Languages"),
+    "integrations":   ("⚙️", "Integrations"),
 }
 
 
@@ -757,10 +759,284 @@ async def _audit_error_logs() -> dict:
             "fix_desc": "Clear old error log entries (keeps last 10)"}
 
 
+# ── Section: Languages ────────────────────────────────────────────────────────
+
+async def _audit_languages() -> dict:
+    """Check multilingual system — locale files, coverage, DB column, registry."""
+    checks = []
+
+    # Check language module imports
+    try:
+        from services.language import FREE_LANGUAGES, VIP_LANGUAGES, ALL_LANGUAGES, get_string
+        total = len(ALL_LANGUAGES)
+        free  = len(FREE_LANGUAGES)
+        vip   = len(VIP_LANGUAGES)
+        checks.append(_check("Language registry", "pass",
+                             f"{total} languages loaded — {free} free, {vip} VIP"))
+        checks.append(_check("Free languages", "pass",
+                             ", ".join(FREE_LANGUAGES.values())))
+        checks.append(_check("VIP languages", "pass",
+                             ", ".join(VIP_LANGUAGES.values())))
+    except ImportError as exc:
+        checks.append(_check("Language module", "fail", str(exc)[:80]))
+        return {"checks": checks, "status": "fail", "auto_fixable": False, "fix_desc": ""}
+
+    # Check locale JSON files exist
+    import os
+    locales_dir = os.path.join(os.path.dirname(__file__), "..", "locales")
+    missing_locales = []
+    present_locales = []
+    from services.language import ALL_LANGUAGES as _ALL  # already imported above
+    for code in _ALL:
+        path = os.path.join(locales_dir, f"{code}.json")
+        if os.path.exists(path):
+            try:
+                import json
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                present_locales.append(f"{code}({len(data)})")
+            except Exception as e:
+                missing_locales.append(f"{code}(parse error: {e})")
+        else:
+            missing_locales.append(f"{code}(missing)")
+
+    if present_locales:
+        checks.append(_check("Locale JSON files", "pass",
+                             f"{len(present_locales)} found: " + ", ".join(present_locales[:5])))
+    if missing_locales:
+        checks.append(_check("Missing locale files", "warn",
+                             ", ".join(missing_locales),
+                             "Create locales/{code}.json for each language"))
+
+    # Check STRINGS translation coverage for a critical key
+    try:
+        from services.language import STRINGS
+        key = "welcome_back"
+        covered = [code for code in _ALL if code in STRINGS and key in STRINGS[code]]
+        missing  = [code for code in _ALL if code not in covered]
+        if missing:
+            checks.append(_check("STRINGS coverage", "warn",
+                                 f"Missing '{key}' for: {', '.join(missing)}",
+                                 "Add translations to services/language.py STRINGS"))
+        else:
+            checks.append(_check("STRINGS coverage", "pass",
+                                 f"'{key}' translated in all {len(_ALL)} languages"))
+    except Exception as exc:
+        checks.append(_check("STRINGS coverage", "warn", str(exc)[:80]))
+
+    # Check users table has language column (Supabase)
+    try:
+        from services.database import _headers, _url, _safe_get
+        r = _safe_get(
+            f"{_url('users')}?select=language&limit=1",
+            headers=_headers(),
+        )
+        if r.status_code == 200:
+            checks.append(_check("DB language column", "pass",
+                                 "users.language column exists and readable"))
+        elif r.status_code == 400 and "language" in r.text:
+            checks.append(_check("DB language column", "fail",
+                                 "Column missing — run supabase_language_schema.sql",
+                                 "Run supabase_language_schema.sql in Supabase SQL Editor"))
+        else:
+            checks.append(_check("DB language column", "warn", f"HTTP {r.status_code}"))
+    except Exception as exc:
+        checks.append(_check("DB language column", "warn", str(exc)[:60]))
+
+    # Check detect_language function exists
+    try:
+        from services.language import detect_language
+        result = detect_language("en")
+        checks.append(_check("detect_language()", "pass",
+                             f"Working — 'en' → '{result}'"))
+    except ImportError:
+        checks.append(_check("detect_language()", "warn",
+                             "Function not found in services/language.py",
+                             "Add detect_language() to services/language.py"))
+    except Exception as exc:
+        checks.append(_check("detect_language()", "warn", str(exc)[:60]))
+
+    return {
+        "checks": checks,
+        "status": _section_status(checks),
+        "auto_fixable": False,
+        "fix_desc": "Run supabase_language_schema.sql to add the language column",
+    }
+
+
+# ── Section: Integrations ─────────────────────────────────────────────────────
+
+async def _audit_integrations() -> dict:
+    """Check all external service integrations — reachability and auth."""
+    import asyncio, os, requests as _req
+
+    checks = []
+
+    # ── Telegram Bot API ──────────────────────────────────────────────────────
+    try:
+        token = TELEGRAM_BOT_TOKEN or ""
+        if not token:
+            checks.append(_check("Telegram Bot API", "fail", "BOT_TOKEN missing"))
+        else:
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(
+                    f"https://api.telegram.org/bot{token}/getMe", timeout=8
+                )
+            )
+            if r.status_code == 200 and r.json().get("ok"):
+                bot_info = r.json()["result"]
+                checks.append(_check("Telegram Bot API", "pass",
+                                     f"@{bot_info.get('username','')} — auth OK"))
+            else:
+                checks.append(_check("Telegram Bot API", "fail",
+                                     f"HTTP {r.status_code}: {r.text[:60]}"))
+    except Exception as exc:
+        checks.append(_check("Telegram Bot API", "fail", str(exc)[:80]))
+
+    # ── Supabase REST ─────────────────────────────────────────────────────────
+    try:
+        sb_url = SUPABASE_URL or ""
+        sb_key = SUPABASE_SERVICE_KEY or ""
+        if not sb_url or not sb_key:
+            checks.append(_check("Supabase REST", "fail", "SUPABASE_URL or KEY missing"))
+        else:
+            headers = {
+                "apikey": sb_key,
+                "Authorization": f"Bearer {sb_key}",
+            }
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(
+                    f"{sb_url}/rest/v1/users?limit=1",
+                    headers=headers, timeout=8
+                )
+            )
+            if r.status_code == 200:
+                checks.append(_check("Supabase REST", "pass",
+                                     f"Connected — {sb_url[:40]}…"))
+            elif r.status_code == 401:
+                checks.append(_check("Supabase REST", "fail",
+                                     "Unauthorised — check SUPABASE_SERVICE_KEY"))
+            else:
+                checks.append(_check("Supabase REST", "warn", f"HTTP {r.status_code}"))
+    except Exception as exc:
+        checks.append(_check("Supabase REST", "fail", str(exc)[:80]))
+
+    # ── OpenRouter (AI Chat) ──────────────────────────────────────────────────
+    try:
+        key = OPENROUTER_API_KEY or ""
+        if not key:
+            checks.append(_check("OpenRouter API", "fail", "OPENROUTER_API_KEY missing"))
+        else:
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=8,
+                )
+            )
+            if r.status_code == 200:
+                checks.append(_check("OpenRouter API", "pass",
+                                     f"Auth OK — model: {OPENROUTER_MODEL}"))
+            elif r.status_code == 401:
+                checks.append(_check("OpenRouter API", "fail",
+                                     "Invalid API key"))
+            else:
+                checks.append(_check("OpenRouter API", "warn", f"HTTP {r.status_code}"))
+    except Exception as exc:
+        checks.append(_check("OpenRouter API", "warn", str(exc)[:80]))
+
+    # ── Google Gemini ─────────────────────────────────────────────────────────
+    try:
+        key = GEMINI_API_KEY or ""
+        if not key:
+            checks.append(_check("Google Gemini API", "warn", "GEMINI_API_KEY not set"))
+        else:
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(
+                    f"https://generativelanguage.googleapis.com/v1/models?key={key}",
+                    timeout=8,
+                )
+            )
+            if r.status_code == 200:
+                checks.append(_check("Google Gemini API", "pass",
+                                     f"Auth OK — model: {GEMINI_MODEL}"))
+            elif r.status_code == 400:
+                checks.append(_check("Google Gemini API", "fail",
+                                     "Invalid API key — check GEMINI_API_KEY"))
+            else:
+                checks.append(_check("Google Gemini API", "warn", f"HTTP {r.status_code}"))
+    except Exception as exc:
+        checks.append(_check("Google Gemini API", "warn", str(exc)[:80]))
+
+    # ── HuggingFace (Image Gen) ───────────────────────────────────────────────
+    try:
+        key = HUGGINGFACE_API_KEY or ""
+        if not key:
+            checks.append(_check("HuggingFace API", "warn", "HUGGINGFACE_API_KEY not set"))
+        else:
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(
+                    "https://huggingface.co/api/whoami",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=8,
+                )
+            )
+            if r.status_code == 200:
+                uname = r.json().get("name", "?")
+                checks.append(_check("HuggingFace API", "pass",
+                                     f"Auth OK — account: {uname}"))
+            elif r.status_code == 401:
+                checks.append(_check("HuggingFace API", "fail",
+                                     "Invalid token — check HUGGINGFACE_API_KEY"))
+            else:
+                checks.append(_check("HuggingFace API", "warn", f"HTTP {r.status_code}"))
+    except Exception as exc:
+        checks.append(_check("HuggingFace API", "warn", str(exc)[:80]))
+
+    # ── Railway deployment ────────────────────────────────────────────────────
+    railway_env = os.getenv("RAILWAY_ENVIRONMENT", "")
+    railway_svc = os.getenv("RAILWAY_SERVICE_NAME", "")
+    railway_proj = os.getenv("RAILWAY_PROJECT_NAME", "")
+    if IS_RAILWAY:
+        checks.append(_check("Railway deployment", "pass",
+                             f"Running on Railway — env={railway_env or 'production'} "
+                             f"svc={railway_svc or BOT_NAME}"))
+    else:
+        checks.append(_check("Railway deployment", "warn",
+                             "Not running on Railway — dev/local mode"))
+
+    # ── Keepalive endpoint ────────────────────────────────────────────────────
+    try:
+        web_url = os.getenv("BOT_WEB_URL", "") or os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+        if web_url:
+            ping_url = f"https://{web_url}/health" if not web_url.startswith("http") else f"{web_url}/health"
+            r = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: _req.get(ping_url, timeout=6)
+            )
+            if r.status_code == 200:
+                checks.append(_check("Keepalive endpoint", "pass",
+                                     f"{ping_url} → 200 OK"))
+            else:
+                checks.append(_check("Keepalive endpoint", "warn",
+                                     f"HTTP {r.status_code}"))
+        else:
+            checks.append(_check("Keepalive endpoint", "warn",
+                                 "BOT_WEB_URL not set — uptime pings disabled"))
+    except Exception as exc:
+        checks.append(_check("Keepalive endpoint", "warn", str(exc)[:60]))
+
+    return {
+        "checks": checks,
+        "status": _section_status(checks),
+        "auto_fixable": False,
+        "fix_desc": "Set missing API keys in Railway environment variables",
+    }
+
+
 # ── Full audit runner ─────────────────────────────────────────────────────────
 
 async def run_full_audit(bot) -> dict:
-    """Run all 12 audit sections concurrently and calculate health score."""
+    """Run all 14 audit sections concurrently and calculate health score."""
     t_start = time.time()
 
     results = await asyncio.gather(
@@ -776,6 +1052,8 @@ async def run_full_audit(bot) -> dict:
         _audit_announcements(),
         _audit_security(),
         _audit_error_logs(),
+        _audit_languages(),
+        _audit_integrations(),
         return_exceptions=True,
     )
 

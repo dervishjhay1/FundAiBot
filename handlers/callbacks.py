@@ -110,7 +110,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await handle_retouch_callback(update, context, mode)
         return
 
-    # ── Language selection ────────────────────────────────────────────────────
+    # ── Language detection (first-start prompt) ─────────────────────────────
+    if data.startswith("lang_detect:"):
+        action = data.split(":", 1)[1]
+        from handlers.language import handle_lang_detect_callback
+        await handle_lang_detect_callback(query, user.id, action, context)
+        return
+
+        # ── Language selection ────────────────────────────────────────────────────
     if data.startswith("lang:"):
         from handlers.language import handle_language_callback
         await handle_language_callback(query, user.id, context)

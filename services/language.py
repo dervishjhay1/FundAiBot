@@ -23,11 +23,14 @@ FREE_LANGUAGES = {
 }
 
 VIP_LANGUAGES = {
-    "ar": "🇸🇦 العربية",
     "de": "🇩🇪 Deutsch",
     "pt": "🇧🇷 Português",
-    "yo": "🇳🇬 Yorùbá",
+    "ar": "🇸🇦 العربية",
+    "ru": "🇷🇺 Русский",
+    "tr": "🇹🇷 Türkçe",
+    "hi": "🇮🇳 हिन्दी",
     "zh": "🇨🇳 中文",
+    "yo": "🇳🇬 Yorùbá",
 }
 
 ALL_LANGUAGES = {**FREE_LANGUAGES, **VIP_LANGUAGES}
@@ -80,6 +83,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Help Guide</b>",
         "settings_title": "⚙️ <b>Settings</b>\n\nCustomise your FundzAiBot experience:",
         "vip_admin_msg": "🛡️ <b>You are the Administrator.</b>\n\nAdmin accounts have <b>unlimited access</b> — no VIP subscription needed.",
+        "language_detected": "🌍 Language detected: <b>{lang}</b>\n\nContinue in {lang}?",
+        "language_continue": "✅ Continue in {lang}",
+        "language_change": "🌍 Choose Another Language",
     },
 
     # ── SPANISH ───────────────────────────────────────────────────────────────
@@ -124,6 +130,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Guía de Ayuda</b>",
         "settings_title": "⚙️ <b>Configuración</b>\n\nPersonaliza tu experiencia con FundzAiBot:",
         "vip_admin_msg": "🛡️ <b>Eres el Administrador.</b>\n\nLas cuentas admin tienen <b>acceso ilimitado</b> — sin VIP necesario.",
+        "language_detected": "🌍 Idioma detectado: <b>{lang}</b>\n\n¿Continuar en {lang}?",
+        "language_continue": "✅ Continuar en {lang}",
+        "language_change": "🌍 Elegir Otro Idioma",
     },
 
     # ── FRENCH ────────────────────────────────────────────────────────────────
@@ -168,6 +177,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Guide d'aide</b>",
         "settings_title": "⚙️ <b>Paramètres</b>\n\nPersonnalisez votre expérience FundzAiBot:",
         "vip_admin_msg": "🛡️ <b>Vous êtes l'Administrateur.</b>\n\nLes comptes admin ont un <b>accès illimité</b> — pas de VIP nécessaire.",
+        "language_detected": "🌍 Langue détectée : <b>{lang}</b>\n\nContinuer en {lang}?",
+        "language_continue": "✅ Continuer en {lang}",
+        "language_change": "🌍 Choisir une Autre Langue",
     },
 
     # ── ARABIC ────────────────────────────────────────────────────────────────
@@ -205,6 +217,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — دليل المساعدة</b>",
         "settings_title": "⚙️ <b>الإعدادات</b>",
         "vip_admin_msg": "🛡️ <b>أنت المسؤول.</b>\n\nلديك وصول غير محدود.",
+        "language_detected": "🌍 اللغة المكتشفة: <b>{lang}</b>\n\nالمتابعة بـ{lang}؟",
+        "language_continue": "✅ المتابعة بـ{lang}",
+        "language_change": "🌍 اختيار لغة أخرى",
     },
 
     # ── GERMAN ────────────────────────────────────────────────────────────────
@@ -242,6 +257,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Hilfeführer</b>",
         "settings_title": "⚙️ <b>Einstellungen</b>",
         "vip_admin_msg": "🛡️ <b>Du bist der Administrator.</b>\n\nAdmin-Konten haben unbegrenzten Zugang.",
+        "language_detected": "🌍 Erkannte Sprache: <b>{lang}</b>\n\nAuf {lang} fortfahren?",
+        "language_continue": "✅ Weiter in {lang}",
+        "language_change": "🌍 Andere Sprache Wählen",
     },
 
     # ── PORTUGUESE ────────────────────────────────────────────────────────────
@@ -279,6 +297,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Guia de Ajuda</b>",
         "settings_title": "⚙️ <b>Configurações</b>",
         "vip_admin_msg": "🛡️ <b>Você é o Administrador.</b>\n\nContas admin têm acesso ilimitado.",
+        "language_detected": "🌍 Idioma detectado: <b>{lang}</b>\n\nContinuar em {lang}?",
+        "language_continue": "✅ Continuar em {lang}",
+        "language_change": "🌍 Escolher Outro Idioma",
     },
 
     # ── YORUBA ────────────────────────────────────────────────────────────────
@@ -315,6 +336,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — Ìtọ́sọ́nà Ìrànlọ́wọ́</b>",
         "settings_title": "⚙️ <b>Àwọn Ìtòlẹ́sẹẹsẹ</b>",
         "vip_admin_msg": "🛡️ <b>Ìwọ ni Admin.</b>\n\nÀwọn Ọ̀nà Admin ní ọ̀nà àìlópin.",
+        "language_detected": "🌍 Èdè tí a rí: <b>{lang}</b>\n\nTẹ̀síwájú ní {lang}?",
+        "language_continue": "✅ Tẹ̀síwájú ní {lang}",
+        "language_change": "🌍 Yan Èdè Mìíràn",
     },
 
     # ── CHINESE ───────────────────────────────────────────────────────────────
@@ -352,20 +376,155 @@ STRINGS: dict[str, dict[str, str]] = {
         "help_title": "<b>🤖 {bot} — 帮助指南</b>",
         "settings_title": "⚙️ <b>设置</b>",
         "vip_admin_msg": "🛡️ <b>您是管理员。</b>\n\n管理员账户拥有无限访问权限。",
+        "language_detected": "🌍 检测到语言：<b>{lang}</b>\n\n继续使用{lang}？",
+        "language_continue": "✅ 继续使用{lang}",
+        "language_change": "🌍 选择其他语言",
     },
+
+    # ── RUSSIAN ───────────────────────────────────────────────────────────────
+    "ru": {
+        "welcome_back": "👋 <b>С возвращением, {name}!</b>\n\nЧто будем делать сегодня?",
+        "welcome_admin": (
+            "🛡️ <b>С возвращением, Администратор!</b>\n\n<b>Центр управления FundzAiBot</b>\n\n"
+            "У вас <b>полный доступ</b> — безлимитные чаты и изображения.\n\n"
+            "<b>Статус бота:</b>\n  💬 Чат: {chat_status}\n  🎨 Изображения: {image_status}\n"
+            "  🚧 Обслуживание: {maint_status}\n  🌐 Новые пользователи: {users_status}\n\n"
+            "Используйте панель ниже для управления ботом."
+        ),
+        "welcome_new": (
+            "✨ <b>Добро пожаловать в FundzAiBot!</b>\n\n"
+            "Ваш умный ИИ-ассистент — на базе GPT-4, Gemini и Stable Diffusion.\n\n"
+            "Начните с <b>{chat} чатов</b> и <b>{image} изображений</b> в день. Бесплатно! 👇"
+        ),
+        "maintenance": "🚧 <b>FundzAiBot на техническом обслуживании.</b>\n\nСкоро вернёмся!",
+        "new_users_paused": "🚫 <b>Регистрация новых пользователей временно приостановлена.</b>\n\nПопробуйте позже.",
+        "referral_bonus": "🎁 <b>Реферальный бонус применён!</b>\nВаш друг получил +10 чатов и +2 кредита.",
+        "choose_language": "🌐 <b>Выберите язык</b>\n\nБесплатные: Английский, Испанский, Французский\n💎 VIP: Все языки",
+        "language_set": "✅ Язык изменён на <b>{lang}</b>!",
+        "language_vip_only": "💎 Этот язык доступен только для VIP.\n\nОбновите план через /subscribe!",
+        "language_detected": "🌍 Обнаружен язык: <b>{lang}</b>\n\nПродолжить на {lang}?",
+        "language_continue": "✅ Продолжить на {lang}",
+        "language_change": "🌍 Выбрать другой язык",
+        "pin_label": "📌 Закреплённое сообщение",
+        "pin_from": "▸ FundzAiBot",
+        "btn_support": "🔧 Поддержка",
+        "btn_channel": "📢 Канал",
+        "btn_community": "👥 Сообщество",
+        "btn_language": "🌐 Язык",
+        "btn_back": "« Главное меню",
+        "chat_disabled": "💬 <b>Чат с ИИ временно отключён.</b>",
+        "image_disabled": "🎨 <b>Генерация изображений временно отключена.</b>",
+        "rate_limited": "⏳ Подождите {wait}с перед отправкой следующего сообщения.",
+        "daily_limit": "📊 <b>Дневной лимит исчерпан!</b>\n\n💎 Перейдите на VIP для {vip_limit}x больше!",
+        "help_title": "<b>🤖 {bot} — Справочное руководство</b>",
+        "settings_title": "⚙️ <b>Настройки</b>",
+        "vip_admin_msg": "🛡️ <b>Вы Администратор.</b>\n\nАккаунты администраторов имеют неограниченный доступ.",
+    },
+
+    # ── TURKISH ───────────────────────────────────────────────────────────────
+    "tr": {
+        "welcome_back": "👋 <b>Tekrar hoşgeldin, {name}!</b>\n\nBugün ne yapacağız?",
+        "welcome_admin": (
+            "🛡️ <b>Tekrar hoşgeldiniz, Yönetici!</b>\n\n<b>FundzAiBot Kontrol Merkezi</b>\n\n"
+            "<b>Tam erişiminiz var</b> — sınırsız sohbet ve resim.\n\n"
+            "<b>Bot Durumu:</b>\n  💬 Sohbet: {chat_status}\n  🎨 Resim: {image_status}\n"
+            "  🚧 Bakım: {maint_status}\n  🌐 Yeni Kullanıcılar: {users_status}\n\n"
+            "Botunuzu yönetmek için aşağıdaki paneli kullanın."
+        ),
+        "welcome_new": (
+            "✨ <b>FundzAiBot'a hoş geldiniz!</b>\n\n"
+            "Yapay zeka asistanınız — GPT-4, Gemini ve Stable Diffusion ile güçlendirilmiştir.\n\n"
+            "Günlük <b>{chat} sohbet</b> ve <b>{image} resim</b> ile başlayın. Ücretsiz! 👇"
+        ),
+        "maintenance": "🚧 <b>FundzAiBot bakımda.</b>\n\nYakında geri döneceğiz!",
+        "new_users_paused": "🚫 <b>Yeni kayıtlar şu anda duraklatıldı.</b>\n\nLütfen daha sonra deneyin.",
+        "referral_bonus": "🎁 <b>Referans bonusu uygulandı!</b>\nArkanızdaki arkadaşınız +10 sohbet ve +2 resim kredisi kazandı.",
+        "choose_language": "🌐 <b>Dilinizi seçin</b>\n\nÜcretsiz: İngilizce, İspanyolca, Fransızca\n💎 VIP: Tüm diller",
+        "language_set": "✅ Dil <b>{lang}</b> olarak ayarlandı!",
+        "language_vip_only": "💎 Bu dil yalnızca VIP kullanıcılar içindir.\n\n/subscribe ile yükseltin!",
+        "language_detected": "🌍 Dil tespit edildi: <b>{lang}</b>\n\n{lang} dilinde devam etmek ister misiniz?",
+        "language_continue": "✅ {lang} ile devam et",
+        "language_change": "🌍 Başka Dil Seç",
+        "pin_label": "📌 Sabitlenmiş Mesaj",
+        "pin_from": "▸ FundzAiBot",
+        "btn_support": "🔧 Destek",
+        "btn_channel": "📢 Kanal",
+        "btn_community": "👥 Topluluk",
+        "btn_language": "🌐 Dil",
+        "btn_back": "« Ana Menü",
+        "chat_disabled": "💬 <b>Yapay Zeka Sohbeti geçici olarak devre dışı.</b>",
+        "image_disabled": "🎨 <b>Resim Oluşturma geçici olarak devre dışı.</b>",
+        "rate_limited": "⏳ Başka bir mesaj göndermeden önce {wait}s bekleyin.",
+        "daily_limit": "📊 <b>Günlük limit doldu!</b>\n\n💎 {vip_limit}x daha fazlası için VIP'e geçin!",
+        "help_title": "<b>🤖 {bot} — Yardım Rehberi</b>",
+        "settings_title": "⚙️ <b>Ayarlar</b>",
+        "vip_admin_msg": "🛡️ <b>Siz Yöneticisiniz.</b>\n\nYönetici hesapları sınırsız erişime sahiptir.",
+    },
+
+    # ── HINDI ─────────────────────────────────────────────────────────────────
+    "hi": {
+        "welcome_back": "👋 <b>वापसी पर स्वागत है, {name}!</b>\n\nआज क्या करें?",
+        "welcome_admin": (
+            "🛡️ <b>वापसी पर स्वागत है, व्यवस्थापक!</b>\n\n<b>FundzAiBot नियंत्रण केंद्र</b>\n\n"
+            "आपके पास <b>पूर्ण पहुँच</b> है — असीमित चैट और चित्र।\n\n"
+            "<b>बॉट स्थिति:</b>\n  💬 चैट: {chat_status}\n  🎨 चित्र: {image_status}\n"
+            "  🚧 रखरखाव: {maint_status}\n  🌐 नए उपयोगकर्ता: {users_status}\n\n"
+            "अपना बॉट प्रबंधित करने के लिए नीचे दिए पैनल का उपयोग करें।"
+        ),
+        "welcome_new": (
+            "✨ <b>FundzAiBot में आपका स्वागत है!</b>\n\n"
+            "आपका बुद्धिमान AI सहायक — GPT-4, Gemini और Stable Diffusion द्वारा संचालित।\n\n"
+            "प्रतिदिन <b>{chat} चैट</b> और <b>{image} चित्र</b> के साथ शुरू करें। मुफ्त! 👇"
+        ),
+        "maintenance": "🚧 <b>FundzAiBot रखरखाव में है।</b>\n\nहम जल्द ही वापस आएंगे!",
+        "new_users_paused": "🚫 <b>नए पंजीकरण अभी रोके गए हैं।</b>\n\nकृपया बाद में प्रयास करें।",
+        "referral_bonus": "🎁 <b>रेफरल बोनस लागू!</b>\nआपके मित्र को +10 चैट और +2 चित्र क्रेडिट मिले।",
+        "choose_language": "🌐 <b>अपनी भाषा चुनें</b>\n\nमुफ्त: अंग्रेज़ी, स्पेनिश, फ्रेंच\n💎 VIP: सभी भाषाएँ",
+        "language_set": "✅ भाषा <b>{lang}</b> पर सेट की गई!",
+        "language_vip_only": "💎 यह भाषा केवल VIP उपयोगकर्ताओं के लिए है।\n\n/subscribe से अपग्रेड करें!",
+        "language_detected": "🌍 भाषा का पता चला: <b>{lang}</b>\n\n{lang} में जारी रखें?",
+        "language_continue": "✅ {lang} में जारी रखें",
+        "language_change": "🌍 दूसरी भाषा चुनें",
+        "pin_label": "📌 पिन किया गया संदेश",
+        "pin_from": "▸ FundzAiBot",
+        "btn_support": "🔧 सहायता",
+        "btn_channel": "📢 चैनल",
+        "btn_community": "👥 समुदाय",
+        "btn_language": "🌐 भाषा",
+        "btn_back": "« मुख्य मेनू",
+        "chat_disabled": "💬 <b>AI चैट अस्थायी रूप से अक्षम है।</b>",
+        "image_disabled": "🎨 <b>छवि निर्माण अस्थायी रूप से अक्षम है।</b>",
+        "rate_limited": "⏳ अगला संदेश भेजने से पहले {wait}s प्रतीक्षा करें।",
+        "daily_limit": "📊 <b>दैनिक सीमा पहुँच गई!</b>\n\n💎 {vip_limit}x अधिक के लिए VIP में अपग्रेड करें!",
+        "help_title": "<b>🤖 {bot} — सहायता मार्गदर्शिका</b>",
+        "settings_title": "⚙️ <b>सेटिंग्स</b>",
+        "vip_admin_msg": "🛡️ <b>आप व्यवस्थापक हैं।</b>\n\nव्यवस्थापक खातों के पास असीमित पहुँच है।",
+    },
+
 }
 
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def get_string(lang: str, key: str, **kwargs) -> str:
-    """Get a translated string for the given language and key."""
-    lang = lang if lang in STRINGS else DEFAULT_LANGUAGE
-    template = STRINGS[lang].get(key) or STRINGS[DEFAULT_LANGUAGE].get(key, "")
+    """Get a translated string for the given language and key.
+    Priority: locale JSON → STRINGS dict → English fallback.
+    """
+    lang = lang if lang in ALL_LANGUAGES else DEFAULT_LANGUAGE
+    # 1. Check locale JSON file first
+    json_locale = _load_locale_json(lang)
+    template = json_locale.get(key)
+    # 2. Fall back to STRINGS dict
+    if not template:
+        template = (STRINGS.get(lang) or {}).get(key)
+    # 3. Fall back to English
+    if not template:
+        en_json = _load_locale_json("en")
+        template = en_json.get(key) or (STRINGS.get(DEFAULT_LANGUAGE) or {}).get(key, "")
     try:
         return template.format(**kwargs) if kwargs else template
-    except KeyError:
-        return STRINGS[DEFAULT_LANGUAGE].get(key, template)
+    except (KeyError, IndexError):
+        return template
 
 
 def is_free_language(lang: str) -> bool:
@@ -402,3 +561,73 @@ def save_user_language(user_id: int, lang: str) -> bool:
     except Exception as exc:
         log.error("save_user_language(%s, %s): %s", user_id, lang, exc)
         return False
+
+
+# ── Telegram language_code → our supported code ──────────────────────────────
+
+_TG_LANG_MAP: dict[str, str] = {
+    # English variants
+    "en": "en", "en-us": "en", "en-gb": "en",
+    # French variants
+    "fr": "fr", "fr-fr": "fr", "fr-be": "fr", "fr-ca": "fr",
+    # Spanish variants
+    "es": "es", "es-es": "es", "es-mx": "es", "es-ar": "es", "es-co": "es",
+    # German variants
+    "de": "de", "de-de": "de", "de-at": "de", "de-ch": "de",
+    # Portuguese variants
+    "pt": "pt", "pt-pt": "pt", "pt-br": "pt",
+    # Arabic
+    "ar": "ar",
+    # Russian variants
+    "ru": "ru", "ru-ru": "ru",
+    # Turkish
+    "tr": "tr", "tr-tr": "tr",
+    # Hindi
+    "hi": "hi", "hi-in": "hi",
+    # Chinese variants
+    "zh": "zh", "zh-cn": "zh", "zh-tw": "zh", "zh-hk": "zh",
+    # Yoruba
+    "yo": "yo",
+}
+
+
+def detect_language(tg_lang_code: str | None) -> str:
+    """Map a Telegram language_code to our nearest supported language.
+    Returns DEFAULT_LANGUAGE ('en') if no match found.
+    """
+    if not tg_lang_code:
+        return DEFAULT_LANGUAGE
+    code = tg_lang_code.lower().strip()
+    # Exact match first
+    if code in _TG_LANG_MAP:
+        return _TG_LANG_MAP[code]
+    # Prefix match (e.g. "ru-RU" → "ru")
+    prefix = code.split("-")[0]
+    return _TG_LANG_MAP.get(prefix, DEFAULT_LANGUAGE)
+
+
+# ── Locale JSON loader ────────────────────────────────────────────────────────
+
+import json as _json
+import os as _os
+
+_LOCALE_CACHE: dict[str, dict] = {}
+_LOCALES_DIR = _os.path.join(_os.path.dirname(__file__), "..", "locales")
+
+
+def _load_locale_json(code: str) -> dict:
+    """Lazily load and cache locale JSON for the given language code."""
+    if code in _LOCALE_CACHE:
+        return _LOCALE_CACHE[code]
+    path = _os.path.join(_LOCALES_DIR, f"{code}.json")
+    if _os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = _json.load(f)
+            _LOCALE_CACHE[code] = data
+            log.debug("Loaded locale JSON: %s (%d keys)", code, len(data))
+            return data
+        except Exception as exc:
+            log.warning("Failed to load locale %s: %s", code, exc)
+    return {}
+

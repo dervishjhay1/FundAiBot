@@ -148,12 +148,15 @@ async def _run_generation(
     else:
         await loop.run_in_executor(
             None,
-            lambda: log_error("image_generation_failed", "HuggingFace returned None", user_id=user_id),
+            lambda: log_error("image_generation_failed", "All image providers returned None", user_id=user_id),
         )
         await msg.reply_text(
             "❌ <b>Image generation failed.</b>\n\n"
-            "The model may be loading (cold start). Please try again in ~60 seconds.\n\n"
-            "💡 Make sure <code>HUGGINGFACE_API_KEY</code> is set and valid.",
+            "Our image server is temporarily busy. Please try again in a moment.\n\n"
+            "💡 Tips:\n"
+            "• Try a simpler or shorter prompt\n"
+            "• Try a different style\n"
+            "• Wait 30 seconds and retry",
             parse_mode="HTML",
             reply_markup=admin_main_menu() if admin else main_menu(),
         )

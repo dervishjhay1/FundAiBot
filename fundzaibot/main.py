@@ -3,14 +3,15 @@ FundAiBot — Main entry point.
 
 Architecture:
   Replit  →  GitHub  →  Railway (LIVE BOT)
-  Replit is for editing + GitHub sync only.
-  Railway is the ONLY environment where Telegram polling runs.
+  Replit is for code editing + GitHub sync ONLY.
+  Railway is the SOLE environment where Telegram polling runs.
 
-Polling guard:
-  Polling starts ONLY if IS_RAILWAY is True (Railway env vars detected)
-  OR ALLOW_POLLING=true is explicitly set.
-  This prevents accidental duplicate polling sessions that cause
-  Telegram 409 Conflict errors and dropped messages.
+Deployment policy — RAILWAY ONLY:
+  Polling starts ONLY when Railway environment variables are detected (IS_RAILWAY=True).
+  The ALLOW_POLLING override has been permanently removed.
+  Any non-Railway environment (Replit, local, CI, Docker, VPS) runs Flask keep-alive
+  only and exits without starting any Telegram connection.
+  This is a hard architectural boundary — do not bypass it.
 """
 
 import asyncio
@@ -20,11 +21,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from telegram import BotCommand
+from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
@@ -51,13 +53,21 @@ from handlers.announcements import (
     pinphoto_handler, listannouncements_handler,
     announce_channel_handler, announce_group_handler, announce_both_handler,
 )
-from handlers.audit import status_handler, testaudit_handler
+from handlers.ai_commands import (
+    ask_handler, code_handler, summarize_handler, translate_handler,
+    analyze_handler, model_handler, testbroadcast_handler,
+)
 from handlers.callbacks import callback_handler
 from handlers.chat import chat_handler, clear_handler
 from handlers.extras import feedback_handler, leaderboard_handler, streak_handler
 from handlers.help import help_handler, about_handler
 from handlers.image import image_command_handler, _pending, handle_image_prompt_message
+from handlers.retouch import photo_handler
+from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
+from handlers.audit import testaudit_handler, status_handler
+from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter
+from handlers.membership import membership_change_handler
 from handlers.profile import profile_handler, referral_handler, history_handler, stats_handler
 from handlers.payment import subscribe_handler, precheckout_handler, successful_payment_handler
 from handlers.start import start_handler
@@ -74,8 +84,8 @@ _SEPARATOR = "=" * 70
 
 
 def _print_startup_banner() -> None:
-    env_label  = "🚂 RAILWAY (production)" if IS_RAILWAY else "💻 LOCAL / REPLIT (development)"
-    poll_label = "✅ YES — bot will start polling" if ALLOW_POLLING else "❌ NO — polling blocked (not on Railway)"
+    env_label  = "🚂 RAILWAY (production)" if IS_RAILWAY else "🚫 NON-RAILWAY (polling BLOCKED)"
+    poll_label = "✅ YES — Telegram polling active" if IS_RAILWAY else "❌ NO — Railway env vars not detected"
     log.info(_SEPARATOR)
     log.info("  %s  v%s", BOT_NAME, BOT_VERSION)
     log.info("  Environment : %s", env_label)
@@ -108,47 +118,134 @@ def _bootstrap_onboarding_schema() -> None:
 
 async def post_init(application: Application) -> None:
     """Register bot commands and start background services after bot connects."""
-    await application.bot.set_my_commands([
-        BotCommand("start",              "Open the main menu"),
-        BotCommand("help",               "Help guide"),
-        BotCommand("about",              "About FundzAiBot"),
-        BotCommand("chat",               "AI conversation"),
-        BotCommand("image",              "Generate an AI image"),
-        BotCommand("style",              "Change AI personality"),
-        BotCommand("subscribe",          "⭐ VIP plans & Telegram Stars"),
-        BotCommand("profile",            "Your profile & credits"),
-        BotCommand("stats",              "Your usage statistics"),
-        BotCommand("referral",           "Referral link & rewards"),
-        BotCommand("history",            "Image generation history"),
-        BotCommand("clear",              "Clear conversation memory"),
-        BotCommand("feedback",           "Send feedback or report a bug"),
-        BotCommand("leaderboard",        "Top referrers leaderboard"),
-        BotCommand("streak",             "Your daily chat streak"),
-        BotCommand("status",             "🛡️ Bot health (admin)"),
-        BotCommand("testaudit",          "🔬 Full diagnostic center (admin)"),
-    ])
-    log.info("Bot commands registered.")
+    from config.settings import ADMIN_USER_ID
+
+    # ── Public commands — visible to ALL users ────────────────────────────────
+    public_commands = [
+        BotCommand("start",       "Open the main menu"),
+        BotCommand("help",        "Full help guide"),
+        BotCommand("about",       "About FundzAiBot"),
+        BotCommand("chat",        "AI conversation (with memory)"),
+        BotCommand("ask",         "Quick one-shot question (no memory)"),
+        BotCommand("code",        "Code generation & debugging"),
+        BotCommand("summarize",   "Summarize text or a replied message"),
+        BotCommand("translate",   "Translate to any language"),
+        BotCommand("analyze",     "Analyze a photo with Gemini Vision"),
+        BotCommand("image",       "Generate an AI image"),
+        BotCommand("model",       "Switch AI model: GPT-4o, Claude, Gemini…"),
+        BotCommand("style",       "Change AI personality (8 modes)"),
+        BotCommand("clear",       "Clear conversation memory"),
+        BotCommand("language",    "Change bot language 🌍"),
+        BotCommand("subscribe",   "⭐ VIP plans & Telegram Stars"),
+        BotCommand("profile",     "Your profile & credits"),
+        BotCommand("stats",       "Your usage statistics"),
+        BotCommand("referral",    "Referral link & rewards"),
+        BotCommand("history",     "Image generation history"),
+        BotCommand("feedback",    "Send feedback or report a bug"),
+        BotCommand("leaderboard", "Top referrers leaderboard"),
+        BotCommand("streak",      "Your daily chat streak"),
+    ]
+
+    # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
+    admin_commands = public_commands + [
+        BotCommand("status",            "📊 Live bot status"),
+        BotCommand("testaudit",         "🔬 Enterprise audit center"),
+        BotCommand("broadcast",         "📢 Broadcast message to all users"),
+        BotCommand("admin",             "👑 Admin dashboard"),
+        BotCommand("admin_stats",       "📊 Platform statistics"),
+        BotCommand("admin_users",       "👥 User management"),
+        BotCommand("admin_ban",         "🚫 Ban a user"),
+        BotCommand("admin_setvip",      "💎 Set VIP status"),
+        BotCommand("admin_addcredits",  "➕ Add credits"),
+        BotCommand("admin_logs",        "📋 Recent error logs"),
+        BotCommand("admin_clearlogs",   "🗑️ Clear error logs"),
+        BotCommand("admin_health",      "🩺 AI health check"),
+        BotCommand("testbroadcast",     "👁️ Preview active announcement"),
+        BotCommand("pin",               "📌 Create announcement"),
+        BotCommand("announce_both",     "📣 Push to channel + group"),
+    ]
+
+    # Set public list for everyone
+    await application.bot.set_my_commands(
+        public_commands,
+        scope=BotCommandScopeDefault(),
+    )
+
+    # Set full admin list — only shows up in admin's private chat
+    if ADMIN_USER_ID:
+        try:
+            await application.bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=ADMIN_USER_ID),
+            )
+        except Exception as exc:
+            log.warning("Could not set admin-scoped commands: %s", exc)
+
+    log.info("Bot commands registered (public=%d, admin=%d).",
+             len(public_commands), len(admin_commands))
     await queue_manager.start()
     mark_ready()
     log.info("Bot fully initialised — polling active.")
 
 
 async def error_handler(update, context) -> None:
-    """Global error handler — logs all unhandled exceptions."""
+    """
+    Global error handler — three tiers:
+
+    1. 'Message is not modified' (BadRequest) → silently ignored.
+       This is a harmless Telegram quirk when a callback button is tapped twice
+       and the resulting edit_message_text sends identical content.
+
+    2. Transient infrastructure errors (Bad Gateway, NetworkError, TimedOut,
+       httpx.ReadError, connection resets) → logged at WARNING, NOT written to DB.
+       These are Railway/Telegram blips, not real application bugs.
+
+    3. Everything else → logged as ERROR, written to Supabase error log.
+    """
+    from telegram.error import BadRequest, NetworkError, TimedOut
     from services.database import log_error
+
+    exc = context.error
+    err = str(exc)
+
+    # ── Tier 1: harmless "Message is not modified" ────────────────────────────
+    if isinstance(exc, BadRequest) and "message is not modified" in err.lower():
+        uid = update.effective_user.id if update and update.effective_user else "?"
+        log.debug("Suppressed 'Message is not modified' for user %s", uid)
+        return
+
+    # ── Tier 2: transient infrastructure / network errors ────────────────────
+    _transient_strings = (
+        "bad gateway",
+        "httpx.readerror",
+        "read error",
+        "connection reset by peer",
+        "connection aborted",
+        "remotedisconnected",
+        "connection refused",
+    )
+    is_transient = (
+        isinstance(exc, (NetworkError, TimedOut))
+        or any(s in err.lower() for s in _transient_strings)
+    )
+    if is_transient:
+        log.warning("Transient infra error (skipped DB write): %.120s", err)
+        return
+
+    # ── Tier 3: real application errors ───────────────────────────────────────
     user_id = None
     if update and update.effective_user:
         user_id = update.effective_user.id
 
-    err = str(context.error)
-    log.error("Unhandled error for user %s: %s", user_id, err, exc_info=context.error)
+    log.error("Unhandled error — user=%s: %s", user_id, err, exc_info=exc)
 
     try:
-        log_error("unhandled_exception", err, user_id=user_id)
+        log_error("unhandled_exception", err[:500], user_id=user_id)
     except Exception:
         pass
 
-    if update and update.effective_message:
+    # Only try to reply when we have an actual user message (not a callback ghost)
+    if update and update.effective_message and not (update.callback_query):
         try:
             await update.effective_message.reply_text(
                 "⚠️ Something went wrong. Please try again in a moment."
@@ -179,28 +276,37 @@ def build_app() -> Application:
         .build()
     )
 
-    # ── Core user commands ─────────────────────────────────────────────────────
-    app.add_handler(CommandHandler("start",              start_handler))
-    app.add_handler(CommandHandler("help",               help_handler))
-    app.add_handler(CommandHandler("about",              about_handler))
-    app.add_handler(CommandHandler("chat",               chat_handler))
-    app.add_handler(CommandHandler("image",              image_command_handler))
-    app.add_handler(CommandHandler("style",              style_handler))
-    app.add_handler(CommandHandler("subscribe",          subscribe_handler))
-    app.add_handler(CommandHandler("profile",            profile_handler))
-    app.add_handler(CommandHandler("stats",              stats_handler))
-    app.add_handler(CommandHandler("referral",           referral_handler))
-    app.add_handler(CommandHandler("history",            history_handler))
-    app.add_handler(CommandHandler("clear",              clear_handler))
-    app.add_handler(CommandHandler("feedback",           feedback_handler))
-    app.add_handler(CommandHandler("leaderboard",        leaderboard_handler))
-    app.add_handler(CommandHandler("streak",             streak_handler))
+    # ── Core commands ──────────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("start",       start_handler))
+    app.add_handler(CommandHandler("help",        help_handler))
+    app.add_handler(CommandHandler("about",       about_handler))
+    app.add_handler(CommandHandler("chat",        chat_handler))
+    app.add_handler(CommandHandler("image",       image_command_handler))
+    app.add_handler(CommandHandler("style",       style_handler))
+    app.add_handler(CommandHandler("language",    language_handler))
+    app.add_handler(CommandHandler("model",       model_handler))
+    app.add_handler(CommandHandler("subscribe",   subscribe_handler))
 
-    # ── Telegram Stars payment handlers ────────────────────────────────────────
+    # ── Extended AI commands ────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("ask",         ask_handler))
+    app.add_handler(CommandHandler("code",        code_handler))
+    app.add_handler(CommandHandler("summarize",   summarize_handler))
+    app.add_handler(CommandHandler("translate",   translate_handler))
+    app.add_handler(CommandHandler("analyze",     analyze_handler))
+    app.add_handler(CommandHandler("profile",     profile_handler))
+    app.add_handler(CommandHandler("stats",       stats_handler))
+    app.add_handler(CommandHandler("referral",    referral_handler))
+    app.add_handler(CommandHandler("history",     history_handler))
+    app.add_handler(CommandHandler("clear",       clear_handler))
+    app.add_handler(CommandHandler("feedback",    feedback_handler))
+    app.add_handler(CommandHandler("leaderboard", leaderboard_handler))
+    app.add_handler(CommandHandler("streak",      streak_handler))
+
+    # ── Telegram Stars payment handlers ───────────────────────────────────────
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
-    # ── Admin — dashboard & monitoring ────────────────────────────────────────
+    # ── Admin — dashboard & monitoring ───────────────────────────────────────
     app.add_handler(CommandHandler("admin",              admin_handler))
     app.add_handler(CommandHandler("admin_stats",        admin_stats_handler))
     app.add_handler(CommandHandler("admin_health",       admin_health_handler))
@@ -209,7 +315,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("admin_images",       admin_images_handler))
     app.add_handler(CommandHandler("admin_clearlogs",    admin_clearlogs_handler))
 
-    # ── Admin — user management ────────────────────────────────────────────────
+    # ── Admin — user management ───────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_users",        admin_users_handler))
     app.add_handler(CommandHandler("admin_user",         admin_userinfo_handler))
     app.add_handler(CommandHandler("admin_ban",          admin_ban_handler))
@@ -220,41 +326,72 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("admin_resetlimit",   admin_resetlimit_handler))
     app.add_handler(CommandHandler("admin_resetuser",    admin_resetuser_handler))
 
-    # ── Admin — communication ──────────────────────────────────────────────────
+    # ── Admin — communication ─────────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_broadcast",    admin_broadcast_handler))
+    app.add_handler(CommandHandler("broadcast",          admin_broadcast_handler))
+    app.add_handler(CommandHandler("testbroadcast",      testbroadcast_handler))
     app.add_handler(CommandHandler("admin_dm",           admin_dm_handler))
 
-    # ── Admin — multi-admin (owner only) ──────────────────────────────────────
+    # ── Admin — multi-admin (owner only) ─────────────────────────────────────
     app.add_handler(CommandHandler("admin_addadmin",     admin_addadmin_handler))
     app.add_handler(CommandHandler("admin_removeadmin",  admin_removeadmin_handler))
     app.add_handler(CommandHandler("admin_listadmins",   admin_listadmins_handler))
 
-    # ── Admin — onboarding system ──────────────────────────────────────────────
+    # ── Admin — onboarding system ─────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_onboarding",   admin_onboarding_handler))
 
-    # ── Announcements — basic ──────────────────────────────────────────────────
+    # ── Enterprise audit center (admin only) ──────────────────────────────────
+    app.add_handler(CommandHandler("status",             status_handler))
+    app.add_handler(CommandHandler("testaudit",          testaudit_handler))
+
+    # ── Announcements ─────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pin",                pin_handler))
     app.add_handler(CommandHandler("unpin",              unpin_handler))
     app.add_handler(CommandHandler("updateannouncement", updateannouncement_handler))
     app.add_handler(CommandHandler("pinphoto",           pinphoto_handler))
     app.add_handler(CommandHandler("listannouncements",  listannouncements_handler))
-
-    # ── Announcements — channel/group auto-posting ─────────────────────────────
     app.add_handler(CommandHandler("announce_channel",   announce_channel_handler))
     app.add_handler(CommandHandler("announce_group",     announce_group_handler))
     app.add_handler(CommandHandler("announce_both",      announce_both_handler))
 
-    # ── Audit & monitoring (admin only) ────────────────────────────────────────
-    app.add_handler(CommandHandler("status",             status_handler))
-    app.add_handler(CommandHandler("testaudit",          testaudit_handler))
-
-    # ── Inline keyboard callbacks ──────────────────────────────────────────────
+    # ── Inline keyboard callbacks ─────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # ── Free-text messages ─────────────────────────────────────────────────────
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _smart_text_handler))
+    # ── Photo messages — AI retouching ───────────────────────────────────────
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, photo_handler))
 
-    # ── Global error handler ───────────────────────────────────────────────────
+    # ── Group integration ─────────────────────────────────────────────────────
+    # /ai command only in groups — private chats use chat_handler (with full guardrails)
+    app.add_handler(CommandHandler("ai", group_ai_handler, filters=filters.ChatType.GROUPS))
+    # Welcome new group members
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
+    # Membership monitoring — detects when users leave the channel or group
+    # Requires "Track all member changes" enabled in Bot Settings on Telegram
+    app.add_handler(ChatMemberHandler(membership_change_handler))
+    # @mention reply — group 1 so it runs alongside spam_filter
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+            mention_handler,
+        ),
+        group=1,
+    )
+    # Anti-spam filter — group 2 runs on every group text message
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+            spam_filter,
+        ),
+        group=2,
+    )
+
+    # ── Free-text messages (PRIVATE only — groups handled above) ──────────────
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        _smart_text_handler,
+    ))
+
+    # ── Global error handler ──────────────────────────────────────────────────
     app.add_error_handler(error_handler)
 
     return app
@@ -262,15 +399,19 @@ def build_app() -> Application:
 
 def _run_dev_mode() -> None:
     """
-    Dev / Replit mode: Flask keep-alive only, NO Telegram polling.
-    This prevents accidental conflicts with the Railway production instance.
+    Non-Railway mode: Flask keep-alive only — Telegram polling is PERMANENTLY BLOCKED.
+
+    This is not configurable. There is no override. Only Railway can run the bot.
+    Replit, local machines, CI, VPS, Docker — all blocked by design.
+    This prevents duplicate bot instances and Telegram 409 Conflict errors.
     """
     log.info(_SEPARATOR)
-    log.info("  DEV MODE — Telegram polling is DISABLED")
-    log.info("  Flask keep-alive starting on port %s", os.getenv("PORT", "5000"))
-    log.info("  To enable polling, set ALLOW_POLLING=true in your .env")
-    log.info("  In production: deploy to Railway — it sets RAILWAY_ENVIRONMENT")
-    log.info("  automatically and polling will start.")
+    log.info("  🚫 RAILWAY-ONLY DEPLOYMENT POLICY ENFORCED")
+    log.info("  Telegram polling is BLOCKED — Railway env vars not detected.")
+    log.info("  This environment is: Replit / Local / CI / Other (not Railway).")
+    log.info("  Flask keep-alive will run on port %s (health checks only).", os.getenv("PORT", "5000"))
+    log.info("  To deploy the bot: push to GitHub → Railway auto-deploys.")
+    log.info("  DO NOT attempt to bypass this guard — it protects production.")
     log.info(_SEPARATOR)
     start_keepalive()
     mark_ready()
@@ -278,7 +419,7 @@ def _run_dev_mode() -> None:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        log.info("Dev mode stopped.")
+        log.info("Non-Railway mode stopped.")
 
 
 def main() -> None:
@@ -289,11 +430,14 @@ def main() -> None:
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    if not ALLOW_POLLING:
+    # ── Railway-only guard — no override exists ───────────────────────────────
+    # ALLOW_POLLING == IS_RAILWAY (override permanently removed).
+    # Non-Railway environments run Flask keep-alive only and stop here.
+    if not IS_RAILWAY:
         _run_dev_mode()
         return
 
-    # ── Production startup sequence (Railway only) ─────────────────────────────
+    # ── Production startup sequence (Railway) ─────────────────────────────────
     log.info("Starting production boot sequence…")
 
     try:

@@ -1,13 +1,13 @@
 """
 FundzAiBot — Master inline-keyboard callback dispatcher.
 Admin gets special routing: admin panel, bot settings, feature flag toggles.
-VIP menu is blocked for admin. Onboarding and announcement callbacks routed here.
+VIP menu is blocked for admin. Onboarding callbacks routed here too.
+Language selection callbacks handled here.
 """
 
 import asyncio
-import html
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from config.settings import ADMIN_USER_ID, is_admin
@@ -16,13 +16,15 @@ from services.database import (
     clear_conversation, get_recent_errors, count_users,
     get_total_stats, get_all_users, get_all_images,
 )
+from services.language import get_user_language, get_string
 from services.queue_manager import queue_manager
 from utils.helpers import time_ago, format_number
 from utils.keyboards import (
     main_menu, admin_main_menu, admin_panel_keyboard,
     ai_styles_menu, image_styles_menu,
     settings_menu, vip_menu, back_to_menu,
-    admin_announcements_keyboard,
+    aitools_menu, updates_keyboard, community_keyboard, support_keyboard,
+    join_screen_keyboard, verify_join_keyboard,
 )
 from utils.logger import get_logger
 
@@ -42,6 +44,134 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     admin = is_admin(user.id)
     log.debug("Callback: user=%s admin=%s data=%s", user.id, admin, data)
 
+    # ── Broadcast confirm / cancel ────────────────────────────────────────────
+    if data.startswith("broadcast:"):
+        if not admin:
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+        action = data[len("broadcast:"):]
+
+        if action == "cancel":
+            pending = context.bot_data.get("_bcast_pending", {})
+            pending.pop(user.id, None)
+            await query.answer("Broadcast cancelled.")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.edit_message_text("📢 Broadcast cancelled.", parse_mode="HTML")
+            except Exception:
+                pass
+            return
+
+        if action == "confirm":
+            pending = context.bot_data.get("_bcast_pending", {})
+            raw_text = pending.pop(user.id, None)
+            if not raw_text:
+                await query.answer("No pending broadcast found. Run /broadcast again.", show_alert=True)
+                return
+            await query.answer("Sending…")
+            try:
+                await query.edit_message_text(
+                    "📢 <b>Broadcasting…</b>\n<i>Sending to all active users. This may take a moment.</i>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            # Run the actual broadcast — edits the status message when done
+            from handlers.admin import _execute_broadcast
+            asyncio.create_task(
+                _execute_broadcast(context.bot, user.id, raw_text, query.message)
+            )
+            return
+
+    # ── Enterprise Audit Center (/testaudit callbacks) ────────────────────────
+    if data.startswith("audit:"):
+        if not admin:
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+        action = data[len("audit:"):]
+        from handlers.audit import audit_callback
+        await audit_callback(query, context, action)
+        return
+
+    # ── Announcement navigator (◀ Prev / Next ▶ on announcement card) ──────────
+    if data.startswith("announce:nav:"):
+        await query.answer()
+        try:
+            target_idx = int(data.split(":")[-1])
+        except (ValueError, IndexError):
+            return
+        import asyncio
+        loop = asyncio.get_running_loop()
+        from services.database import get_announcement_history
+        from handlers.announcements import format_announcement_card
+        from utils.keyboards import announcement_keyboard
+        from services.language import get_user_language
+
+        db_user2 = await loop.run_in_executor(
+            None, lambda: get_or_create_user(user.id, first_name=user.first_name or "")
+        )
+        lang = get_user_language(db_user2, user.id)
+
+        history = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
+        if not history or target_idx < 0 or target_idx >= len(history):
+            await query.answer("No more announcements.", show_alert=True)
+            return
+
+        ann       = history[target_idx]
+        msg_text  = ann.get("message", "")
+        photo_url = ann.get("photo_url")
+        card      = format_announcement_card(msg_text, lang=lang)
+        kbd       = announcement_keyboard(ann_count=len(history), ann_idx=target_idx)
+
+        if photo_url:
+            try:
+                await context.bot.send_photo(
+                    user.id,
+                    photo=photo_url,
+                    caption=card,
+                    parse_mode="HTML",
+                    reply_markup=kbd,
+                )
+                try:
+                    await query.delete_message()
+                except Exception:
+                    pass
+                return
+            except Exception:
+                pass
+
+        try:
+            await query.edit_message_text(card, parse_mode="HTML", reply_markup=kbd)
+        except Exception:
+            await context.bot.send_message(user.id, card, parse_mode="HTML", reply_markup=kbd)
+        return
+
+    # ── Image retouch mode selection ──────────────────────────────────────────
+    if data.startswith("retouch:"):
+        mode = data.split(":", 1)[1]
+        from handlers.retouch import handle_retouch_callback
+        await handle_retouch_callback(update, context, mode)
+        return
+
+    # ── AI model selection ────────────────────────────────────────────────────
+    if data.startswith("setmodel:"):
+        from handlers.ai_commands import handle_setmodel_callback
+        await handle_setmodel_callback(query, user.id)
+        return
+
+    # ── Language detection (first-start prompt) ─────────────────────────────
+    if data.startswith("lang_detect:"):
+        action = data.split(":", 1)[1]
+        from handlers.language import handle_lang_detect_callback
+        await handle_lang_detect_callback(query, user.id, action, context)
+        return
+
+    # ── Language selection ────────────────────────────────────────────────────
+    if data.startswith("lang:"):
+        from handlers.language import handle_language_callback
+        await handle_language_callback(query, user.id, context)
+        return
+
     # ── Onboarding callbacks ──────────────────────────────────────────────────
     if data.startswith("onboarding:"):
         action = data.split(":", 1)[1]
@@ -55,25 +185,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.answer()
         return
 
-    # ── Audit center callbacks ────────────────────────────────────────────────
-    if data.startswith("audit:"):
-        if not admin:
-            await query.answer("Admin only.", show_alert=True)
-            return
-        # Do NOT answer here — audit_callback manages its own query.answer()
-        # for every branch so progress text ("Running audit…") shows on the button.
-        action = data.split("audit:", 1)[1]
-        from handlers.audit import audit_callback
-        await audit_callback(query, context, action)
-        return
-
-    # ── Announcement callbacks ────────────────────────────────────────────────
-    if data.startswith("announcement:"):
-        action = data.split(":", 1)[1]
-        await _handle_announcement_callback(query, context, action, admin)
-        return
-
-    # ── Admin panel shortcut ──────────────────────────────────────────────────
+    # ── Admin panel shortcut (from admin_main_menu button) ────────────────────
     if data == "admin:panel":
         if not admin:
             await query.answer("Admin only.", show_alert=True)
@@ -113,6 +225,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await handle_botsetting_toggle(query, flag_key)
         return
 
+    # ── Admin announcement panel ──────────────────────────────────────────────
+    if data == "admin:announcement":
+        if not admin:
+            await query.answer("Admin only.", show_alert=True)
+            return
+        await query.answer()
+        from services.database import get_active_announcement
+        import asyncio
+        loop = asyncio.get_running_loop()
+        ann = await loop.run_in_executor(None, get_active_announcement)
+        if ann:
+            from handlers.announcements import format_announcement_card
+            from utils.keyboards import announcement_keyboard
+            preview = format_announcement_card(ann.get("message", ""))
+            text = (
+                f"📌 <b>Announcement Manager</b>\n\n"
+                f"<b>Status:</b> 🟢 ACTIVE\n"
+                f"<b>Preview:</b>\n{preview}\n\n"
+                f"<b>Commands:</b>\n"
+                f"<code>/pin &lt;message&gt;</code> — New announcement\n"
+                f"<code>/updateannouncement &lt;text&gt;</code> — Edit current\n"
+                f"<code>/unpin</code> — Remove announcement\n"
+                f"<code>/pinphoto &lt;url&gt;</code> — Add banner image\n"
+                f"<code>/listannouncements</code> — View history"
+            )
+        else:
+            text = (
+                f"📌 <b>Announcement Manager</b>\n\n"
+                f"<b>Status:</b> ⚫ No active announcement\n\n"
+                f"<b>Commands:</b>\n"
+                f"<code>/pin &lt;message&gt;</code> — Create announcement\n"
+                f"<code>/listannouncements</code> — View history"
+            )
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_keyboard())
+        except Exception:
+            pass
+        return
+
     # ── Admin find-user prompt ────────────────────────────────────────────────
     if data == "admin:finduser":
         if not admin:
@@ -128,21 +279,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    # ── Admin announcements panel ─────────────────────────────────────────────
-    if data == "admin:announcements":
-        if not admin:
-            await query.answer("Admin only.", show_alert=True)
-            return
-        await query.answer()
-        await _show_admin_announcements_panel(query, context)
-        return
-
     # ── Admin onboarding stats ────────────────────────────────────────────────
     if data == "admin:onboarding_stats":
         if not admin:
             await query.answer("Admin only.", show_alert=True)
             return
         await query.answer("Fetching onboarding stats…")
+        import asyncio
         from services.onboarding import get_onboarding_stats
         from config.settings import (
             TELEGRAM_CHANNEL_ID, TELEGRAM_CHANNEL_URL,
@@ -151,6 +294,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             ONBOARDING_GROUP_REWARD_CHAT, ONBOARDING_GROUP_REWARD_IMAGE,
             ONBOARDING_REQUIRED,
         )
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         loop = asyncio.get_running_loop()
         stats = await loop.run_in_executor(None, get_onboarding_stats)
         text = (
@@ -174,11 +318,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             pass
         return
 
+    # ── Language menu ─────────────────────────────────────────────────────────
+    if data == "menu:language":
+        await query.answer()
+        import asyncio
+        loop = asyncio.get_running_loop()
+        db_user = await loop.run_in_executor(
+            None, lambda: get_or_create_user(user.id, first_name=user.first_name or "", username=user.username or "")
+        )
+        lang = get_user_language(db_user, user.id)
+        text = get_string(lang, "choose_language")
+        from handlers.language import _language_keyboard
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=_language_keyboard(db_user, user.id))
+        return
+
     # ── Main menu navigation ──────────────────────────────────────────────────
     if data == "menu:back":
         await query.answer()
+        import asyncio
+        loop = asyncio.get_running_loop()
+        db_user = await loop.run_in_executor(None, lambda: get_or_create_user(user.id))
+        lang = get_user_language(db_user, user.id)
         await query.edit_message_text(
-            "🏠 <b>Main Menu</b>\n\nChoose an option:",
+            get_string(lang, "welcome_back", name=user.first_name or "friend"),
             parse_mode="HTML",
             reply_markup=admin_main_menu() if admin else main_menu(),
         )
@@ -227,8 +389,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         db_user = get_or_create_user(user.id)
         style = (db_user or {}).get("ai_style", "default")
         notifs = (db_user or {}).get("notifications", True)
+        import asyncio
+        loop = asyncio.get_running_loop()
+        db_user2 = await loop.run_in_executor(None, lambda: get_or_create_user(user.id))
+        lang = get_user_language(db_user2, user.id)
         await query.edit_message_text(
-            "⚙️ <b>Settings</b>\n\nCustomise your FundzAiBot experience:",
+            get_string(lang, "settings_title"),
             parse_mode="HTML",
             reply_markup=settings_menu(current_style=style, notifications=notifs),
         )
@@ -236,10 +402,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data == "menu:vip":
         if admin:
             await query.answer()
+            import asyncio
+            loop = asyncio.get_running_loop()
+            db_user = await loop.run_in_executor(None, lambda: get_or_create_user(user.id))
+            lang = get_user_language(db_user, user.id)
             await query.edit_message_text(
-                "🛡️ <b>You are the Administrator.</b>\n\n"
-                "Admin accounts have <b>unlimited access</b> — no VIP subscription needed.\n\n"
-                "Use the Admin Panel to manage VIP for your users.",
+                get_string(lang, "vip_admin_msg"),
                 parse_mode="HTML",
                 reply_markup=admin_panel_keyboard(),
             )
@@ -259,6 +427,239 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "<i>Tap a plan below to pay with Stars:</i>",
                 parse_mode="HTML",
                 reply_markup=vip_menu(),
+            )
+
+    # ── Ecosystem: Verify membership ─────────────────────────────────────────
+    elif data == "menu:verify":
+        await query.answer()
+        from handlers.membership import check_membership, join_status_text
+        status = await check_membership(context.bot, user.id, context.bot_data)
+
+        if status["all_ok"]:
+            # Verified — proceed to onboarding or main menu
+            import asyncio as _asyncio
+            loop = _asyncio.get_running_loop()
+            from services.onboarding import needs_onboarding, init_onboarding
+            show_onboard = await loop.run_in_executor(None, needs_onboarding, user.id, False)
+            if show_onboard:
+                await loop.run_in_executor(None, init_onboarding, user.id, "verify")
+                from handlers.onboarding import show_onboarding
+                await query.edit_message_text(
+                    "✅ <b>Access verified!</b>\n\nSetting up your account…",
+                    parse_mode="HTML",
+                )
+                await show_onboarding(update, context, source="verify")
+            else:
+                lang_user = await loop.run_in_executor(
+                    None, lambda: get_or_create_user(user.id)
+                )
+                lang = get_user_language(lang_user, user.id)
+                import html as _html
+                await query.edit_message_text(
+                    get_string(lang, "welcome_back", name=_html.escape(user.first_name or "friend")),
+                    parse_mode="HTML",
+                    reply_markup=main_menu(),
+                )
+        else:
+            status_line = join_status_text(status)
+            await query.edit_message_text(
+                f"⚠️ <b>Not verified yet.</b>\n\n"
+                f"Please join both the channel and community group before continuing.\n\n"
+                f"{status_line}\n\n"
+                f"<i>Tap the buttons below, then try again.</i>",
+                parse_mode="HTML",
+                reply_markup=verify_join_keyboard(
+                    channel_ok=status["channel"],
+                    group_ok=status["group"],
+                    need_channel=status["need_channel"],
+                    need_group=status["need_group"],
+                ),
+            )
+
+    # ── Ecosystem: Latest Updates ─────────────────────────────────────────────
+    elif data == "menu:updates":
+        await query.answer()
+        import asyncio as _asyncio
+        loop = _asyncio.get_running_loop()
+        from services.database import get_active_announcement, get_announcement_history
+        from handlers.announcements import format_announcement_card
+        from config.settings import TELEGRAM_CHANNEL_URL, TELEGRAM_CHANNEL_NAME
+
+        ann  = await loop.run_in_executor(None, get_active_announcement)
+        hist = await loop.run_in_executor(None, lambda: get_announcement_history(limit=3))
+
+        chan_name = TELEGRAM_CHANNEL_NAME or "FundzAi Channel"
+        text = f"📢 <b>Latest Updates</b>\n\n"
+
+        if ann:
+            import html as _html
+            preview = _html.escape((ann.get("message") or "")[:300])
+            text += f"<b>📌 Pinned Announcement:</b>\n<blockquote>{preview}</blockquote>\n\n"
+
+        if hist and len(hist) > 1:
+            text += f"<b>📋 Recent ({len(hist)} updates):</b>\n"
+            for i, a in enumerate(hist[:3], 1):
+                from utils.helpers import time_ago
+                import html as _html2
+                snip = _html2.escape((a.get("message") or "")[:80])
+                text += f"{i}. {snip}…  <i>{time_ago(a.get('created_at',''))}</i>\n"
+            text += "\n"
+
+        if not ann and not hist:
+            text += "No announcements yet.\n\nVisit the channel for the latest news!\n"
+
+        text += f"<i>Follow 📢 {_html.escape(chan_name)} for all official updates.</i>"
+
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=updates_keyboard(),
+        )
+
+    # ── Ecosystem: Community ──────────────────────────────────────────────────
+    elif data == "menu:community":
+        await query.answer()
+        from config.settings import TELEGRAM_GROUP_NAME
+        grp_name = TELEGRAM_GROUP_NAME or "FundzAi Community"
+        import html as _html
+        await query.edit_message_text(
+            f"👥 <b>Community</b>\n\n"
+            f"Join <b>{_html.escape(grp_name)}</b> — the official FundzAiBot community.\n\n"
+            f"<b>What you can do:</b>\n"
+            f"• 💬 Discuss AI topics & use cases\n"
+            f"• 🙋 Get help from the community\n"
+            f"• 💡 Suggest new features\n"
+            f"• 🤖 Use /ai in the group\n"
+            f"• 🏆 Share your AI creations\n\n"
+            f"<b>Community Rules:</b>\n"
+            f"• Be respectful and helpful\n"
+            f"• No spam or scam links\n"
+            f"• No NSFW content\n"
+            f"• Violations = warning → mute → ban",
+            parse_mode="HTML",
+            reply_markup=community_keyboard(),
+        )
+
+    # ── Ecosystem: AI Tools hub ───────────────────────────────────────────────
+    elif data == "menu:aitools":
+        await query.answer()
+        import asyncio as _asyncio
+        loop  = _asyncio.get_running_loop()
+        dbu   = await loop.run_in_executor(None, lambda: get_or_create_user(user.id))
+        style = (dbu or {}).get("ai_style", "default").capitalize()
+        await query.edit_message_text(
+            f"🤖 <b>AI Tools</b>\n\n"
+            f"<b>AI Chat</b> — conversational AI with memory\n"
+            f"<b>Image Gen</b> — text-to-image generation\n"
+            f"<b>AI Style</b> — current: <b>{style}</b>\n\n"
+            f"<i>Just send a message to start chatting, or pick a tool below:</i>",
+            parse_mode="HTML",
+            reply_markup=aitools_menu(),
+        )
+
+    # ── Ecosystem: Support ────────────────────────────────────────────────────
+    elif data == "menu:support":
+        await query.answer()
+        await query.edit_message_text(
+            "🆘 <b>Support</b>\n\n"
+            "Need help with FundzAiBot?\n\n"
+            "<b>📩 Direct Support:</b>\n"
+            "Message @Biodunfund for account issues, bugs, or VIP help.\n\n"
+            "<b>❓ Help Guide:</b>\n"
+            "Type /help for a full command reference.\n\n"
+            "<b>🐛 Report a Bug:</b>\n"
+            "Use /feedback to report issues with details.\n\n"
+            "<b>👥 Community Help:</b>\n"
+            "Ask in the community group — the team and members respond fast!",
+            parse_mode="HTML",
+            reply_markup=support_keyboard(),
+        )
+
+    # ── Ecosystem: Report Issue ───────────────────────────────────────────────
+    elif data == "menu:report":
+        await query.answer()
+        await query.edit_message_text(
+            "🐛 <b>Report an Issue</b>\n\n"
+            "Help us improve FundzAiBot!\n\n"
+            "Use the command:\n"
+            "<code>/feedback Your issue description here</code>\n\n"
+            "Or contact support directly at @Biodunfund.\n\n"
+            "<i>All reports are reviewed by the team.</i>",
+            parse_mode="HTML",
+            reply_markup=back_to_menu(),
+        )
+
+    # ── Ecosystem: Suggest Feature ────────────────────────────────────────────
+    elif data == "menu:suggest":
+        await query.answer()
+        await query.edit_message_text(
+            "💡 <b>Suggest a Feature</b>\n\n"
+            "We love hearing your ideas!\n\n"
+            "Use the command:\n"
+            "<code>/feedback [SUGGEST] Your feature idea here</code>\n\n"
+            "Or post in the community group — the best ideas get built!\n\n"
+            "<i>All suggestions are reviewed by the development team.</i>",
+            parse_mode="HTML",
+            reply_markup=back_to_menu(),
+        )
+
+    # ── Ecosystem: Style picker (from settings) ───────────────────────────────
+    elif data == "menu:style_picker":
+        await query.answer()
+        import asyncio as _asyncio
+        loop = _asyncio.get_running_loop()
+        dbu  = await loop.run_in_executor(None, lambda: get_or_create_user(user.id))
+        style = (dbu or {}).get("ai_style", "default").capitalize()
+        await query.edit_message_text(
+            f"🎭 <b>Choose AI Style</b>\n\nCurrent: <b>{style}</b>\n\nPick a personality:",
+            parse_mode="HTML",
+            reply_markup=ai_styles_menu(),
+        )
+
+    # ── Ecosystem: AI Commands guide ──────────────────────────────────────────
+    elif data == "menu:aicommands":
+        await query.answer()
+        await query.edit_message_text(
+            "📚 <b>AI Commands</b>\n\n"
+            "<code>/chat</code> — conversational AI (with memory)\n"
+            "<code>/ask</code> — quick one-shot question\n"
+            "<code>/code</code> — code generation & debugging\n"
+            "<code>/summarize</code> — summarize text\n"
+            "<code>/translate</code> — translate to any language\n"
+            "<code>/analyze</code> — analyze a photo (Gemini Vision)\n"
+            "<code>/image</code> — generate an AI image\n"
+            "<code>/style</code> — change AI personality\n"
+            "<code>/clear</code> — clear conversation memory\n\n"
+            "<i>Or just send a message — I'll reply!</i>",
+            parse_mode="HTML",
+            reply_markup=back_to_menu(),
+        )
+
+    # ── Ecosystem: View announcements (paginated) ─────────────────────────────
+    elif data == "menu:announcements":
+        await query.answer()
+        import asyncio as _asyncio, html as _html
+        loop = _asyncio.get_running_loop()
+        from services.database import get_announcement_history
+        from utils.helpers import time_ago
+        history = await loop.run_in_executor(None, lambda: get_announcement_history(limit=5))
+        if not history:
+            await query.edit_message_text(
+                "📭 No announcements yet.",
+                reply_markup=back_to_menu(),
+            )
+        else:
+            lines = ["📌 <b>Announcement History</b>\n"]
+            for i, a in enumerate(history, 1):
+                status_str = "🟢" if a.get("is_active") else "⚫"
+                preview    = _html.escape((a.get("message") or "")[:100])
+                if len(a.get("message") or "") > 100:
+                    preview += "…"
+                lines.append(f"{status_str} {i}. {preview}\n   <i>{time_ago(a.get('created_at',''))}</i>")
+            await query.edit_message_text(
+                "\n\n".join(lines),
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
             )
 
     # ── AI Style selection ────────────────────────────────────────────────────
@@ -314,6 +715,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"User ID: {user.id}\n"
             f"Name: {user.first_name}\n"
             f"AI Style: {(db_user or {}).get('ai_style','default')}\n"
+            f"Language: {(db_user or {}).get('language','en')}\n"
             f"Chat credits used (today): {credits.get('chat_today',0)}\n"
             f"Image credits used (today): {credits.get('image_today',0)}\n"
             f"All-time chats: {credits.get('chat_total',0)}\n"
@@ -350,7 +752,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data.startswith("admin:") and admin:
         await query.answer()
         action = data.split(":", 1)[1]
-        await _handle_admin_callback(query, action, context)
+        await _handle_admin_callback(query, action)
 
     elif data.startswith("admin:") and not admin:
         await query.answer("Admin only.", show_alert=True)
@@ -369,181 +771,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer()
 
 
-# ── Announcement callbacks ─────────────────────────────────────────────────────
-
-async def _handle_announcement_callback(query, context, action: str, admin: bool) -> None:
-    """Handle all announcement: prefixed callbacks."""
-    loop = asyncio.get_running_loop()
-
-    if action == "dismiss":
-        # User dismissed the announcement — unpin and delete the message
-        await query.answer("Announcement dismissed.", show_alert=False)
-        try:
-            await context.bot.unpin_chat_message(
-                chat_id=query.message.chat_id,
-                message_id=query.message.message_id,
-            )
-        except Exception:
-            pass
-        try:
-            await query.message.delete()
-        except Exception:
-            # If can't delete, just remove the keyboard
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-        return
-
-    # Admin-only announcement management
-    if not admin:
-        await query.answer("Admin only.", show_alert=True)
-        return
-
-    from services.database import get_active_announcement, deactivate_announcements, get_announcement_history
-    from handlers.announcements import post_to_channel, post_to_group, format_announcement_card
-
-    if action == "post_channel":
-        ann = await loop.run_in_executor(None, get_active_announcement)
-        if not ann:
-            await query.answer("No active announcement to post.", show_alert=True)
-            return
-        await query.answer("Posting to channel…")
-        ok, status = await post_to_channel(context.bot, ann)
-        try:
-            await query.edit_message_text(
-                f"<b>Channel Post Result:</b>\n{status}",
-                parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
-            )
-        except Exception:
-            pass
-
-    elif action == "post_group":
-        ann = await loop.run_in_executor(None, get_active_announcement)
-        if not ann:
-            await query.answer("No active announcement to post.", show_alert=True)
-            return
-        await query.answer("Posting to group…")
-        ok, status = await post_to_group(context.bot, ann)
-        try:
-            await query.edit_message_text(
-                f"<b>Group Post Result:</b>\n{status}",
-                parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
-            )
-        except Exception:
-            pass
-
-    elif action == "post_both":
-        ann = await loop.run_in_executor(None, get_active_announcement)
-        if not ann:
-            await query.answer("No active announcement to post.", show_alert=True)
-            return
-        await query.answer("Posting to channel and group…")
-        from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID
-        results = []
-        if TELEGRAM_CHANNEL_ID:
-            ok, st = await post_to_channel(context.bot, ann)
-            results.append(f"📢 {st}")
-        if TELEGRAM_GROUP_ID:
-            ok, st = await post_to_group(context.bot, ann)
-            results.append(f"👥 {st}")
-        if not results:
-            results = ["❌ No channel or group configured."]
-        try:
-            await query.edit_message_text(
-                "<b>Broadcast Result:</b>\n" + "\n".join(results),
-                parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
-            )
-        except Exception:
-            pass
-
-    elif action == "unpin":
-        await loop.run_in_executor(None, deactivate_announcements)
-        await query.answer("Announcement unpinned.", show_alert=False)
-        try:
-            await query.edit_message_text(
-                "✅ <b>Announcement unpinned.</b>\n\n"
-                "Users will no longer see a pinned banner on /start.",
-                parse_mode="HTML",
-                reply_markup=admin_panel_keyboard(),
-            )
-        except Exception:
-            pass
-
-    elif action == "history":
-        history = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
-        if not history:
-            await query.answer("No announcement history yet.", show_alert=True)
-            return
-        import html as _html
-        lines = ["📌 <b>Announcement History</b>\n"]
-        for i, a in enumerate(history, 1):
-            status  = "🟢 ACTIVE" if a.get("is_active") else "⚫ archived"
-            preview = _html.escape((a.get("message") or "")[:80])
-            if len(a.get("message") or "") > 80:
-                preview += "…"
-            photo = " 🖼️" if a.get("photo_url") else ""
-            lines.append(
-                f"{i}. [{status}]{photo}\n"
-                f"   {preview}\n"
-                f"   <i>{time_ago(a.get('created_at', ''))}</i>"
-            )
-        await query.answer()
-        try:
-            await query.edit_message_text(
-                "\n\n".join(lines),
-                parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
-            )
-        except Exception:
-            pass
-    else:
-        await query.answer()
-
-
-async def _show_admin_announcements_panel(query, context) -> None:
-    """Show the admin announcement management panel inline."""
-    from services.database import get_active_announcement
-    from handlers.announcements import format_announcement_card
-
-    loop = asyncio.get_running_loop()
-    ann = await loop.run_in_executor(None, get_active_announcement)
-
-    if ann:
-        preview = format_announcement_card(ann.get("message", ""))
-        text = (
-            f"📌 <b>Announcement Management</b>\n\n"
-            f"<b>Active announcement:</b>\n{preview}\n\n"
-            f"📷 Photo: {'✅ Set' if ann.get('photo_url') else '❌ None'}\n\n"
-            f"Use the buttons to post to channel/group, or commands:\n"
-            f"<code>/pin &lt;msg&gt;</code> — create/replace\n"
-            f"<code>/updateannouncement &lt;msg&gt;</code> — edit\n"
-            f"<code>/pinphoto &lt;url&gt;</code> — add image\n"
-            f"<code>/announce_both</code> — post to all"
-        )
-    else:
-        text = (
-            "📌 <b>Announcement Management</b>\n\n"
-            "❌ No active announcement.\n\n"
-            "Create one with:\n<code>/pin &lt;your message&gt;</code>"
-        )
-
-    try:
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=admin_announcements_keyboard(),
-        )
-    except Exception:
-        pass
-
-
-# ── Admin callbacks ────────────────────────────────────────────────────────────
-
-async def _handle_admin_callback(query, action: str, context=None) -> None:
+async def _handle_admin_callback(query, action: str) -> None:
     """Handle /admin panel inline callbacks."""
     from services.database import get_banned_users
     from handlers.admin import handle_admin_panel_callback, handle_bot_settings_callback
@@ -572,7 +800,8 @@ async def _handle_admin_callback(query, action: str, context=None) -> None:
         for u in users:
             badge = "🛡️" if is_admin(u.get("user_id", 0)) else ("💎" if u.get("is_vip") else "🆓")
             ban   = " 🚫" if u.get("is_banned") else ""
-            lines.append(f"{badge} <code>{u['user_id']}</code> {u.get('first_name','')}{ban}")
+            lang  = u.get("language", "en")
+            lines.append(f"{badge} <code>{u['user_id']}</code> {u.get('first_name','')}{ban} [{lang}]")
         await query.edit_message_text(
             "\n".join(lines), parse_mode="HTML", reply_markup=admin_panel_keyboard()
         )
@@ -648,12 +877,49 @@ async def _handle_admin_callback(query, action: str, context=None) -> None:
     elif action == "botsettings":
         await handle_bot_settings_callback(query)
 
+    elif action == "post_channel":
+        from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_CHANNEL_NAME
+        if not TELEGRAM_CHANNEL_ID:
+            await query.edit_message_text(
+                "⚠️ TELEGRAM_CHANNEL_ID is not set in Railway env vars.",
+                reply_markup=admin_panel_keyboard(),
+            )
+            return
+        await query.edit_message_text(
+            f"📢 <b>Post to Channel</b>\n\n"
+            f"Send a message to the channel using:\n"
+            f"<code>/announce_channel</code> — posts active announcement\n"
+            f"<code>/announce_both</code> — posts to channel + group\n"
+            f"<code>/broadcast &lt;message&gt;</code> — custom message to all users + channel\n\n"
+            f"<i>Channel: {TELEGRAM_CHANNEL_NAME or 'configured'}</i>",
+            parse_mode="HTML",
+            reply_markup=admin_panel_keyboard(),
+        )
+
+    elif action == "post_group":
+        from config.settings import TELEGRAM_GROUP_ID, TELEGRAM_GROUP_NAME
+        if not TELEGRAM_GROUP_ID:
+            await query.edit_message_text(
+                "⚠️ TELEGRAM_GROUP_ID is not set in Railway env vars.",
+                reply_markup=admin_panel_keyboard(),
+            )
+            return
+        await query.edit_message_text(
+            f"👥 <b>Post to Group</b>\n\n"
+            f"Send a message to the community group using:\n"
+            f"<code>/announce_group</code> — posts active announcement\n"
+            f"<code>/announce_both</code> — posts to channel + group\n\n"
+            f"<i>Group: {TELEGRAM_GROUP_NAME or 'configured'}</i>",
+            parse_mode="HTML",
+            reply_markup=admin_panel_keyboard(),
+        )
+
     elif action in ("vip", "credits", "broadcast"):
         await query.edit_message_text(
             f"Use command-based admin tools for this action:\n"
             f"• /admin_setvip &lt;user_id&gt; &lt;tier&gt;\n"
             f"• /admin_addcredits &lt;user_id&gt; &lt;chat|image&gt; &lt;amount&gt;\n"
-            f"• /admin_broadcast &lt;message&gt;",
+            f"• /broadcast &lt;message&gt;",
             parse_mode="HTML",
             reply_markup=admin_panel_keyboard(),
         )

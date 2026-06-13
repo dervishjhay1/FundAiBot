@@ -1,33 +1,140 @@
 """
 FundzAiBot — All InlineKeyboardMarkup factories live here.
 Handlers stay clean; all button logic is centralised.
+
+Ecosystem menus (v3):
+  main_menu()            — 8-button ecosystem hub (channel, community, AI, VIP, etc.)
+  join_screen_keyboard() — force-join screen for new/unverified users
+  verify_join_keyboard() — partial-join state (shows only missing buttons)
+  aitools_menu()         — AI tools submenu
+  community_keyboard()   — community section
+  updates_keyboard()     — latest updates section
 """
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+from config.settings import TELEGRAM_CHANNEL_URL, TELEGRAM_GROUP_URL, BOT_WEB_URL
 
 
-# ── Regular user menus ─────────────────────────────────────────────────────────
+# ── Ecosystem main menu (regular users) ───────────────────────────────────────
 
 def main_menu() -> InlineKeyboardMarkup:
+    """
+    Professional 8-button ecosystem hub shown to verified users.
+    Covers all primary journeys: updates, community, AI, VIP, referrals, profile,
+    settings, and support.
+    """
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🤖 AI Chat",    callback_data="menu:chat"),
-            InlineKeyboardButton("🎨 Image Gen",  callback_data="menu:image"),
+            InlineKeyboardButton("📢 Latest Updates", callback_data="menu:updates"),
+            InlineKeyboardButton("👥 Community",      callback_data="menu:community"),
         ],
         [
-            InlineKeyboardButton("👤 My Profile", callback_data="menu:profile"),
-            InlineKeyboardButton("📊 My Stats",   callback_data="menu:stats"),
+            InlineKeyboardButton("🤖 AI Tools",       callback_data="menu:aitools"),
+            InlineKeyboardButton("💎 VIP",             callback_data="menu:vip"),
         ],
         [
-            InlineKeyboardButton("🔗 Referral",   callback_data="menu:referral"),
-            InlineKeyboardButton("⚙️ Settings",   callback_data="menu:settings"),
+            InlineKeyboardButton("🎁 Referrals",      callback_data="menu:referral"),
+            InlineKeyboardButton("👤 Profile",         callback_data="menu:profile"),
         ],
         [
-            InlineKeyboardButton("💎 VIP Plans",  callback_data="menu:vip"),
-            InlineKeyboardButton("ℹ️ Help",       callback_data="menu:help"),
+            InlineKeyboardButton("⚙️ Settings",       callback_data="menu:settings"),
+            InlineKeyboardButton("🆘 Support",         callback_data="menu:support"),
         ],
     ])
 
+
+# ── Force-join screens ────────────────────────────────────────────────────────
+
+def join_screen_keyboard() -> InlineKeyboardMarkup:
+    """
+    Shown to new users who haven't yet joined both the channel and group.
+    Three buttons: Join Channel, Join Community, Verify Access.
+    """
+    channel_url = TELEGRAM_CHANNEL_URL or "https://t.me/FundzAiChannel"
+    group_url   = TELEGRAM_GROUP_URL   or "https://t.me/FundzAiGroup"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel",     url=channel_url)],
+        [InlineKeyboardButton("👥 Join Community",   url=group_url)],
+        [InlineKeyboardButton("✅ Verify Access",    callback_data="menu:verify")],
+    ])
+
+
+def verify_join_keyboard(
+    channel_ok: bool = False,
+    group_ok:   bool = False,
+    need_channel: bool = True,
+    need_group:   bool = True,
+) -> InlineKeyboardMarkup:
+    """
+    Shown after a failed verification — only shows buttons for the parts still missing.
+    Always shows the Verify Access button again.
+    """
+    channel_url = TELEGRAM_CHANNEL_URL or "https://t.me/FundzAiChannel"
+    group_url   = TELEGRAM_GROUP_URL   or "https://t.me/FundzAiGroup"
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if need_channel and not channel_ok:
+        rows.append([InlineKeyboardButton("📢 Join Channel",   url=channel_url)])
+    if need_group and not group_ok:
+        rows.append([InlineKeyboardButton("👥 Join Community", url=group_url)])
+    rows.append([InlineKeyboardButton("🔄 Try Again",          callback_data="menu:verify")])
+    return InlineKeyboardMarkup(rows)
+
+
+# ── Ecosystem sub-menus ───────────────────────────────────────────────────────
+
+def aitools_menu() -> InlineKeyboardMarkup:
+    """AI tools hub — reached from main menu 🤖 AI Tools button."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💬 AI Chat",         callback_data="menu:chat"),
+            InlineKeyboardButton("🎨 Image Gen",        callback_data="menu:image"),
+        ],
+        [
+            InlineKeyboardButton("🎭 AI Style",        callback_data="menu:style_picker"),
+            InlineKeyboardButton("📚 AI Commands",     callback_data="menu:aicommands"),
+        ],
+        [InlineKeyboardButton("« Back",                callback_data="menu:back")],
+    ])
+
+
+def updates_keyboard() -> InlineKeyboardMarkup:
+    """Latest updates section keyboard."""
+    channel_url = TELEGRAM_CHANNEL_URL or "https://t.me/FundzAiChannel"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Open Channel",       url=channel_url)],
+        [InlineKeyboardButton("📌 View Announcements", callback_data="menu:announcements")],
+        [InlineKeyboardButton("« Back",                callback_data="menu:back")],
+    ])
+
+
+def community_keyboard() -> InlineKeyboardMarkup:
+    """Community section keyboard."""
+    group_url = TELEGRAM_GROUP_URL or "https://t.me/FundzAiGroup"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Open Community",     url=group_url)],
+        [
+            InlineKeyboardButton("📋 Community Rules", callback_data="menu:rules"),
+            InlineKeyboardButton("🐛 Report Issue",    callback_data="menu:report"),
+        ],
+        [InlineKeyboardButton("💡 Suggest Feature",    callback_data="menu:suggest")],
+        [InlineKeyboardButton("« Back",                callback_data="menu:back")],
+    ])
+
+
+def support_keyboard() -> InlineKeyboardMarkup:
+    """Support section keyboard."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 Contact Support",    url="https://t.me/Biodunfund")],
+        [InlineKeyboardButton("❓ Help Guide",         callback_data="menu:help")],
+        [InlineKeyboardButton("🐛 Report a Bug",       callback_data="menu:report")],
+        [InlineKeyboardButton("« Back",                callback_data="menu:back")],
+    ])
+
+
+# ── Regular user sub-menus (unchanged) ────────────────────────────────────────
 
 def back_to_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -78,8 +185,9 @@ def image_styles_menu() -> InlineKeyboardMarkup:
 def settings_menu(current_style: str = "default", notifications: bool = True) -> InlineKeyboardMarkup:
     notif_text = "🔔 Notifs: ON" if notifications else "🔕 Notifs: OFF"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"🤖 AI Style: {current_style.capitalize()}", callback_data="menu:chat")],
+        [InlineKeyboardButton(f"🤖 AI Style: {current_style.capitalize()}", callback_data="menu:style_picker")],
         [InlineKeyboardButton(notif_text, callback_data="settings:toggle_notif")],
+        [InlineKeyboardButton("🌐 Change Language", callback_data="menu:language")],
         [InlineKeyboardButton("🗑️ Clear Chat History", callback_data="settings:clear_history")],
         [InlineKeyboardButton("📤 Export My Data",     callback_data="settings:export")],
         [InlineKeyboardButton("« Back",                callback_data="menu:back")],
@@ -124,26 +232,30 @@ def pagination(page: int, total_pages: int, prefix: str) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup([row, [InlineKeyboardButton("« Back", callback_data="menu:back")]])
 
 
-# ── Admin menus ────────────────────────────────────────────────────────────────
+# ── Admin menus ───────────────────────────────────────────────────────────────
 
 def admin_main_menu() -> InlineKeyboardMarkup:
-    """Main menu shown to the admin — replaces VIP Plans with Admin Panel button."""
+    """Main menu shown to the admin — ecosystem menu + admin panel."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🤖 AI Chat",       callback_data="menu:chat"),
-            InlineKeyboardButton("🎨 Image Gen",     callback_data="menu:image"),
+            InlineKeyboardButton("📢 Latest Updates", callback_data="menu:updates"),
+            InlineKeyboardButton("👥 Community",      callback_data="menu:community"),
         ],
         [
-            InlineKeyboardButton("👤 My Profile",    callback_data="menu:profile"),
-            InlineKeyboardButton("📊 My Stats",      callback_data="menu:stats"),
+            InlineKeyboardButton("🤖 AI Tools",       callback_data="menu:aitools"),
+            InlineKeyboardButton("💎 VIP",             callback_data="menu:vip"),
         ],
         [
-            InlineKeyboardButton("🛡️ Admin Panel",   callback_data="admin:panel"),
-            InlineKeyboardButton("⚙️ Settings",      callback_data="menu:settings"),
+            InlineKeyboardButton("🛡️ Admin Panel",    callback_data="admin:panel"),
+            InlineKeyboardButton("📊 Live Stats",      callback_data="admin:stats"),
         ],
         [
-            InlineKeyboardButton("🩺 Health Check",  callback_data="admin:health"),
-            InlineKeyboardButton("ℹ️ Help",          callback_data="menu:help"),
+            InlineKeyboardButton("🩺 Health Check",   callback_data="admin:health"),
+            InlineKeyboardButton("🌐 Language",        callback_data="menu:language"),
+        ],
+        [
+            InlineKeyboardButton("👤 Profile",         callback_data="menu:profile"),
+            InlineKeyboardButton("ℹ️ Help",            callback_data="menu:help"),
         ],
     ])
 
@@ -152,34 +264,41 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
     """Full admin control panel keyboard."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("👥 Users",         callback_data="admin:users"),
-            InlineKeyboardButton("📊 Live Stats",    callback_data="admin:stats"),
+            InlineKeyboardButton("👥 Users",          callback_data="admin:users"),
+            InlineKeyboardButton("📊 Live Stats",      callback_data="admin:stats"),
         ],
         [
-            InlineKeyboardButton("📢 Broadcast",     callback_data="admin:broadcast"),
-            InlineKeyboardButton("🚫 Banned",        callback_data="admin:banned"),
+            InlineKeyboardButton("📢 Broadcast",      callback_data="admin:broadcast"),
+            InlineKeyboardButton("🚫 Banned",          callback_data="admin:banned"),
         ],
         [
-            InlineKeyboardButton("💎 Set VIP",       callback_data="admin:vip"),
-            InlineKeyboardButton("💳 Credits",       callback_data="admin:credits"),
+            InlineKeyboardButton("💎 Set VIP",        callback_data="admin:vip"),
+            InlineKeyboardButton("💳 Credits",         callback_data="admin:credits"),
         ],
         [
-            InlineKeyboardButton("📋 Error Logs",    callback_data="admin:logs"),
-            InlineKeyboardButton("🔄 Queue",         callback_data="admin:queue"),
+            InlineKeyboardButton("📋 Error Logs",     callback_data="admin:logs"),
+            InlineKeyboardButton("🔄 Queue",           callback_data="admin:queue"),
         ],
         [
-            InlineKeyboardButton("🖼️ Images",       callback_data="admin:images"),
-            InlineKeyboardButton("🩺 AI Health",     callback_data="admin:health"),
+            InlineKeyboardButton("🖼️ Images",         callback_data="admin:images"),
+            InlineKeyboardButton("🩺 AI Health",       callback_data="admin:health"),
         ],
         [
-            InlineKeyboardButton("⚙️ Bot Settings",  callback_data="admin:botsettings"),
-            InlineKeyboardButton("🔍 Find User",     callback_data="admin:finduser"),
+            InlineKeyboardButton("⚙️ Bot Settings",   callback_data="admin:botsettings"),
+            InlineKeyboardButton("🔍 Find User",       callback_data="admin:finduser"),
         ],
         [
-            InlineKeyboardButton("📌 Announcements", callback_data="admin:announcements"),
-            InlineKeyboardButton("🚀 Onboarding",    callback_data="admin:onboarding_stats"),
+            InlineKeyboardButton("🚀 Onboarding",     callback_data="admin:onboarding_stats"),
+            InlineKeyboardButton("📌 Announcement",    callback_data="admin:announcement"),
         ],
-        [InlineKeyboardButton("« Main Menu",         callback_data="admin:back_home")],
+        [
+            InlineKeyboardButton("📢 Channel Post",   callback_data="admin:post_channel"),
+            InlineKeyboardButton("👥 Group Post",      callback_data="admin:post_group"),
+        ],
+        [
+            InlineKeyboardButton("🩺 Audit Center",   callback_data="audit:dashboard"),
+        ],
+        [InlineKeyboardButton("« Main Menu",           callback_data="admin:back_home")],
     ])
 
 
@@ -198,49 +317,59 @@ def bot_settings_keyboard(flags: dict) -> InlineKeyboardMarkup:
     ])
 
 
-# ── Announcement keyboards ─────────────────────────────────────────────────────
+# ── Announcement card keyboard ────────────────────────────────────────────────
 
-def announcement_keyboard(support_url: str = "https://t.me/Biodunfund") -> InlineKeyboardMarkup:
-    """Compact keyboard shown below pinned announcements (support link only)."""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔧 Support", url=support_url),
-    ]])
-
-
-def announcement_keyboard_with_dismiss(support_url: str = "https://t.me/Biodunfund") -> InlineKeyboardMarkup:
+def announcement_keyboard(
+    support_url: str = "https://t.me/Biodunfund",
+    ann_count: int = 1,
+    ann_idx: int = 0,
+) -> InlineKeyboardMarkup:
     """
-    Announcement keyboard shown to users.
-    Includes 🔧 Support link and 🔕 Dismiss button.
-    Dismiss unpins and hides the announcement for the user.
-    """
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔧 Support",  url=support_url),
-        InlineKeyboardButton("🔕 Dismiss",  callback_data="announcement:dismiss"),
-    ]])
+    Premium announcement keyboard.
 
+    Row 1 — navigation (only shown when there are multiple announcements):
+      ◀ Prev  •  1 / 3  •  Next ▶
 
-def admin_announcements_keyboard() -> InlineKeyboardMarkup:
+    Row 2 — action links:
+      🔧 Support  |  📢 Channel  |  👥 Community
+
+    Row 3 — Open full Overlay (only when BOT_WEB_URL is configured):
+      🔔 Open Announcement Panel   (Telegram Web App)
     """
-    Admin announcement management panel.
-    Shown after /pin, /updateannouncement, /announce_* commands.
-    """
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📢 Post to Channel", callback_data="announcement:post_channel"),
-            InlineKeyboardButton("👥 Post to Group",   callback_data="announcement:post_group"),
-        ],
-        [
-            InlineKeyboardButton("📡 Post to Both",    callback_data="announcement:post_both"),
-            InlineKeyboardButton("📋 History",         callback_data="announcement:history"),
-        ],
-        [
-            InlineKeyboardButton("🗑️ Unpin",           callback_data="announcement:unpin"),
-            InlineKeyboardButton("« Admin Panel",      callback_data="admin:panel"),
-        ],
+    channel_url = TELEGRAM_CHANNEL_URL or "https://t.me/FundzAiChannel"
+    group_url   = TELEGRAM_GROUP_URL   or "https://t.me/FundzAiGroup"
+
+    rows = []
+
+    if ann_count > 1:
+        nav_row = []
+        if ann_idx > 0:
+            nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"announce:nav:{ann_idx - 1}"))
+        nav_row.append(
+            InlineKeyboardButton(f"📌 {ann_idx + 1}/{ann_count}", callback_data="noop")
+        )
+        if ann_idx < ann_count - 1:
+            nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"announce:nav:{ann_idx + 1}"))
+        rows.append(nav_row)
+
+    rows.append([
+        InlineKeyboardButton("🔧 Support",   url=support_url),
+        InlineKeyboardButton("📢 Channel",   url=channel_url),
+        InlineKeyboardButton("👥 Community", url=group_url),
     ])
 
+    if BOT_WEB_URL:
+        rows.append([
+            InlineKeyboardButton(
+                "🔔 Open Announcement Panel",
+                web_app=WebAppInfo(url=f"{BOT_WEB_URL}/announcement"),
+            )
+        ])
 
-# ── Legacy alias (used by some imports) ───────────────────────────────────────
+    return InlineKeyboardMarkup(rows)
+
+
+# ── Legacy alias ──────────────────────────────────────────────────────────────
 def admin_menu() -> InlineKeyboardMarkup:
-    """Alias kept for backward-compatibility with existing callback handlers."""
+    """Alias kept for backward-compatibility."""
     return admin_panel_keyboard()

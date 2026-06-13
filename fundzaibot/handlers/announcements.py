@@ -1,190 +1,133 @@
 """
-FundzAiBot — Pinned announcement system.
-Admin-only commands. The active announcement is displayed to every user on /start
-as a compact Telegram-native card using <blockquote> (left blue accent line) and
-pinned via pin_chat_message() — creating a true native Telegram sticky banner at
-the top of each user's chat.
+FundzAiBot — Sticky announcement system.
+Admin-only commands. The active announcement is shown to every user on /start
+as a premium Telegram-native blockquote card (left blue accent line, dark bg).
 
-Admin commands:
-  /pin <message>                    — create/replace the active announcement
-  /unpin                            — remove the active announcement
-  /updateannouncement <message>     — edit the current text
-  /pinphoto <url|remove>            — attach/remove a banner image
-  /listannouncements                — view announcement history
-  /announce_channel                 — post the current announcement to channel
-  /announce_group                   — post the current announcement to group
-  /announce_both                    — post to both channel and group
+NOT Telegram's native pin_chat_message — this is a bot-rendered announcement card
+that simulates the premium sticky announcement experience.
 """
 
 import asyncio
 import html
 
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.error import TelegramError
 
-from config.settings import (
-    is_admin,
-    TELEGRAM_CHANNEL_ID, TELEGRAM_CHANNEL_URL, TELEGRAM_CHANNEL_NAME,
-    TELEGRAM_GROUP_ID, TELEGRAM_GROUP_URL, TELEGRAM_GROUP_NAME,
-)
+from config.settings import is_admin
 from services.database import (
     get_active_announcement, create_announcement, update_active_announcement,
     set_photo_on_announcement, deactivate_announcements, get_announcement_history,
 )
 from utils.helpers import time_ago
-from utils.keyboards import (
-    announcement_keyboard, announcement_keyboard_with_dismiss,
-    admin_announcements_keyboard, back_to_menu, admin_main_menu,
-)
+from utils.keyboards import announcement_keyboard, back_to_menu, admin_main_menu
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# ── Default announcement (seeded on first startup) ─────────────────────────────
+# ── Default announcement (seeded on first startup) ────────────────────────────
 
 DEFAULT_ANNOUNCEMENT = (
     "📢 Announcement from FundzAiBot:\n\n"
-    "⚠️ Note: @FundzAiBot is actively updated and improved daily to deliver "
-    "better performance, features, and stability. If you experience any issues "
-    "or notice a feature not working properly, please contact @Biodunfund for "
-    "support and further assistance. 💙"
+    "⚠️ FundzAiBot is actively updated daily with new AI features, "
+    "stability improvements, and optimizations.\n\n"
+    "💙 Join our official channels for updates, bonuses, support, "
+    "and community access."
 )
 
 SUPPORT_URL = "https://t.me/Biodunfund"
 
 
-# ── Card formatter ─────────────────────────────────────────────────────────────
+# ── Card formatter ────────────────────────────────────────────────────────────
 
-def format_announcement_card(message: str) -> str:
+def format_announcement_card(message: str, lang: str = "en") -> str:
     """
-    Render an announcement as a compact Telegram-native card.
-    Telegram's <blockquote> tag produces:
-      • Left blue vertical accent line
+    Render a premium sticky announcement card using Telegram's <blockquote> tag.
+
+    The <blockquote> element produces:
+      • Left blue vertical accent line (Telegram native)
       • Dark-tinted background container
       • Mobile-friendly compact sizing
-      • Premium pinned notice look
+      • Rounded appearance on modern Telegram clients
+      • Exactly the look premium bots use for sticky notices
+
+    This deliberately avoids Telegram's native pin_chat_message() system.
+    The result is a visually distinct, compact, professional announcement card
+    that appears directly in the chat flow — above the main menu.
     """
     escaped = html.escape(message)
+
+    from services.language import get_string
+    pin_label = get_string(lang, "pin_label")
+    pin_from  = get_string(lang, "pin_from")
+
     return (
         f"<blockquote>"
-        f"📌 <b>Pinned Message</b>\n"
-        f"▸ FundzAiBot\n\n"
+        f"{pin_label}\n"
+        f"{pin_from}\n\n"
         f"{escaped}"
         f"</blockquote>"
     )
 
 
-# ── Sticky announcement delivery ──────────────────────────────────────────────
+# ── send_sticky_announcement ──────────────────────────────────────────────────
 
 async def send_sticky_announcement(
-    bot: Bot,
-    chat_id: int | str,
-    announcement: dict,
-    *,
-    pin: bool = True,
-) -> int | None:
+    bot,
+    user_id: int,
+    ann: dict,
+    pin: bool = False,
+) -> None:
     """
-    Send the active announcement to a chat and pin it to create a native
-    Telegram sticky banner at the top.
+    Send the active announcement card as a DM to a user.
 
-    Returns the message_id of the sent message, or None on failure.
-    The 'dismiss' button lets users unpin it themselves.
+    Used by:
+      • /start (on every visit if an announcement is active)
+      • Returning user flows
+
+    The 'pin' parameter is accepted for backward compatibility but is ignored —
+    Telegram does not support pinning messages in private chats via the bot API
+    in a useful way (it would pin the bot's own message in a DM, which is
+    invisible to users).  The blockquote card itself provides a visually distinct
+    "pinned" feel.
     """
-    msg_text  = announcement.get("message", "")
-    photo_url = announcement.get("photo_url")
-    card      = format_announcement_card(msg_text)
-    kbd       = announcement_keyboard_with_dismiss()
+    if not ann:
+        return
 
-    sent_msg = None
+    message   = ann.get("message") or ""
+    photo_url = ann.get("photo_url") or ""
+
+    if not message:
+        return
+
+    card = format_announcement_card(message)
+
     try:
         if photo_url:
-            try:
-                sent_msg = await bot.send_photo(
-                    chat_id, photo=photo_url, caption=card,
-                    parse_mode="HTML", reply_markup=kbd,
-                )
-            except TelegramError:
-                sent_msg = await bot.send_message(
-                    chat_id, card, parse_mode="HTML", reply_markup=kbd,
-                )
+            await bot.send_photo(
+                chat_id=user_id,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
         else:
-            sent_msg = await bot.send_message(
-                chat_id, card, parse_mode="HTML", reply_markup=kbd,
+            await bot.send_message(
+                chat_id=user_id,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
             )
     except Exception as exc:
-        log.debug("Failed to send announcement to %s: %s", chat_id, exc)
-        return None
-
-    if not sent_msg:
-        return None
-
-    # Pin the message — creates the native Telegram sticky banner at the top
-    if pin:
-        try:
-            await bot.pin_chat_message(
-                chat_id=chat_id,
-                message_id=sent_msg.message_id,
-                disable_notification=True,   # silent pin — no "pinned a message" notification
-            )
-            log.debug("Announcement pinned in chat %s (msg_id=%s)", chat_id, sent_msg.message_id)
-        except TelegramError as exc:
-            # Pinning requires admin rights in groups/channels.
-            # In private DMs it always works when bot has the right.
-            log.debug("Could not pin announcement in %s: %s", chat_id, exc)
-
-    return sent_msg.message_id
+        log.debug("send_sticky_announcement to user=%s failed: %s", user_id, exc)
 
 
-# ── Channel / Group posting ────────────────────────────────────────────────────
-
-async def post_to_channel(bot: Bot, announcement: dict) -> tuple[bool, str]:
-    """
-    Post the active announcement to the configured Telegram channel.
-    Returns (success, status_message).
-    """
-    if not TELEGRAM_CHANNEL_ID:
-        return False, "❌ TELEGRAM_CHANNEL_ID is not configured."
-    try:
-        msg_id = await send_sticky_announcement(bot, TELEGRAM_CHANNEL_ID, announcement, pin=True)
-        if msg_id:
-            return True, f"✅ Posted to {TELEGRAM_CHANNEL_NAME} (msg_id={msg_id})"
-        return False, "⚠️ Message sent but could not pin."
-    except TelegramError as exc:
-        log.error("post_to_channel: %s", exc)
-        return False, f"❌ Telegram error: {str(exc)[:100]}"
-    except Exception as exc:
-        log.error("post_to_channel unexpected: %s", exc)
-        return False, f"❌ {type(exc).__name__}: {str(exc)[:80]}"
-
-
-async def post_to_group(bot: Bot, announcement: dict) -> tuple[bool, str]:
-    """
-    Post the active announcement to the configured Telegram group.
-    Returns (success, status_message).
-    """
-    if not TELEGRAM_GROUP_ID:
-        return False, "❌ TELEGRAM_GROUP_ID is not configured."
-    try:
-        msg_id = await send_sticky_announcement(bot, TELEGRAM_GROUP_ID, announcement, pin=True)
-        if msg_id:
-            return True, f"✅ Posted to {TELEGRAM_GROUP_NAME} (msg_id={msg_id})"
-        return False, "⚠️ Message sent but could not pin."
-    except TelegramError as exc:
-        log.error("post_to_group: %s", exc)
-        return False, f"❌ Telegram error: {str(exc)[:100]}"
-    except Exception as exc:
-        log.error("post_to_group unexpected: %s", exc)
-        return False, f"❌ {type(exc).__name__}: {str(exc)[:80]}"
-
-
-# ── Guard ──────────────────────────────────────────────────────────────────────
+# ── Guard ─────────────────────────────────────────────────────────────────────
 
 def _guard(user) -> bool:
     return bool(user) and is_admin(user.id)
 
 
-# ── /pin <message> ─────────────────────────────────────────────────────────────
+# ── /pin <message> ────────────────────────────────────────────────────────────
 
 async def pin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/pin <message> — Create/replace the active pinned announcement."""
@@ -199,12 +142,8 @@ async def pin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "📌 <b>Pin an Announcement</b>\n\n"
             "Usage: <code>/pin &lt;message&gt;</code>\n\n"
             "Example:\n"
-            "<code>/pin 🎉 FundzAiBot v2.4 is live! New features inside.</code>\n\n"
-            "<i>Users see this as a native pinned banner on /start. Previous pin is replaced.</i>\n\n"
-            "<b>Auto-posting commands:</b>\n"
-            "• <code>/announce_channel</code> — post to channel\n"
-            "• <code>/announce_group</code> — post to group\n"
-            "• <code>/announce_both</code> — post to both",
+            "<code>/pin 🎉 FundzAiBot v3 is live! New features inside.</code>\n\n"
+            "<i>Users see this on /start. Previous pin is replaced.</i>",
             parse_mode="HTML",
         )
         return
@@ -213,20 +152,20 @@ async def pin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: create_announcement(message, created_by=user.id))
 
-    # Show admin a live preview
-    preview = format_announcement_card(message)
+    history   = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
+    ann_count = len(history)
+    preview   = format_announcement_card(message)
     await update.effective_message.reply_text(
         f"✅ <b>Announcement pinned!</b>\n\n"
-        f"<i>Preview (what users see on /start with native sticky banner):</i>\n\n"
-        f"{preview}\n\n"
-        f"Use the buttons below to post to channel/group:",
+        f"<i>Preview (what users see on /start):</i>\n\n"
+        f"{preview}",
         parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
+        reply_markup=announcement_keyboard(SUPPORT_URL, ann_count=ann_count, ann_idx=0),
     )
     log.info("Admin pinned announcement: user=%s chars=%d", user.id, len(message))
 
 
-# ── /unpin ─────────────────────────────────────────────────────────────────────
+# ── /unpin ────────────────────────────────────────────────────────────────────
 
 async def unpin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/unpin — Remove the active pinned announcement."""
@@ -235,7 +174,7 @@ async def unpin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text("⛔ Admin only.")
         return
 
-    loop = asyncio.get_running_loop()
+    loop    = asyncio.get_running_loop()
     current = await loop.run_in_executor(None, get_active_announcement)
     if not current:
         await update.effective_message.reply_text(
@@ -254,7 +193,7 @@ async def unpin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     log.info("Admin unpinned announcement: user=%s", user.id)
 
 
-# ── /updateannouncement <message> ──────────────────────────────────────────────
+# ── /updateannouncement <message> ─────────────────────────────────────────────
 
 async def updateannouncement_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/updateannouncement <message> — Edit the current active announcement text."""
@@ -272,7 +211,7 @@ async def updateannouncement_handler(update: Update, context: ContextTypes.DEFAU
         return
 
     message = " ".join(args)
-    loop = asyncio.get_running_loop()
+    loop    = asyncio.get_running_loop()
     current = await loop.run_in_executor(None, get_active_announcement)
 
     if not current:
@@ -284,20 +223,22 @@ async def updateannouncement_handler(update: Update, context: ContextTypes.DEFAU
         return
 
     await loop.run_in_executor(None, lambda: update_active_announcement(message))
-    preview = format_announcement_card(message)
+    history   = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
+    ann_count = len(history)
+    preview   = format_announcement_card(message)
     await update.effective_message.reply_text(
         f"✅ <b>Announcement updated!</b>\n\n"
         f"<i>Live preview:</i>\n\n{preview}",
         parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
+        reply_markup=announcement_keyboard(SUPPORT_URL, ann_count=ann_count, ann_idx=0),
     )
     log.info("Admin updated announcement: user=%s", user.id)
 
 
-# ── /pinphoto <url|remove> ─────────────────────────────────────────────────────
+# ── /pinphoto <url|remove> ────────────────────────────────────────────────────
 
 async def pinphoto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/pinphoto <url|remove> — Attach or remove a banner image from the active announcement."""
+    """/pinphoto <url|remove> — Attach or remove a banner image."""
     user = update.effective_user
     if not _guard(user):
         await update.effective_message.reply_text("⛔ Admin only.")
@@ -316,7 +257,7 @@ async def pinphoto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     raw = args[0].strip()
     url: str | None = None if raw.lower() == "remove" else raw
 
-    loop = asyncio.get_running_loop()
+    loop    = asyncio.get_running_loop()
     current = await loop.run_in_executor(None, get_active_announcement)
     if not current:
         await update.effective_message.reply_text(
@@ -333,144 +274,24 @@ async def pinphoto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 photo=url,
                 caption=caption,
                 parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
+                reply_markup=announcement_keyboard(SUPPORT_URL),
             )
         except Exception:
             await update.effective_message.reply_text(
                 f"⚠️ URL saved but could not preview — confirm it is a direct image link.\n"
                 f"<code>{html.escape(url)}</code>",
                 parse_mode="HTML",
-                reply_markup=admin_announcements_keyboard(),
+                reply_markup=admin_main_menu(),
             )
     else:
         await update.effective_message.reply_text(
             "✅ Banner image removed from announcement.",
-            reply_markup=admin_announcements_keyboard(),
+            reply_markup=admin_main_menu(),
         )
     log.info("Admin pinphoto: user=%s url=%s", user.id, url)
 
 
-# ── /announce_channel ──────────────────────────────────────────────────────────
-
-async def announce_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/announce_channel — Post the current active announcement to the Telegram channel."""
-    user = update.effective_user
-    if not _guard(user):
-        await update.effective_message.reply_text("⛔ Admin only.")
-        return
-
-    loop = asyncio.get_running_loop()
-    ann = await loop.run_in_executor(None, get_active_announcement)
-    if not ann:
-        await update.effective_message.reply_text(
-            "⚠️ No active announcement to post.\n"
-            "Create one with <code>/pin &lt;message&gt;</code> first.",
-            parse_mode="HTML",
-        )
-        return
-
-    if not TELEGRAM_CHANNEL_ID:
-        await update.effective_message.reply_text(
-            "❌ <code>TELEGRAM_CHANNEL_ID</code> is not configured.\n"
-            "Set it in Railway environment variables.",
-            parse_mode="HTML",
-        )
-        return
-
-    await update.effective_message.reply_text("📤 Posting to channel…")
-    ok, status = await post_to_channel(context.bot, ann)
-    await update.effective_message.reply_text(
-        f"<b>Channel Post Result:</b>\n{status}",
-        parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
-    )
-    log.info("Admin posted to channel: user=%s ok=%s", user.id, ok)
-
-
-# ── /announce_group ────────────────────────────────────────────────────────────
-
-async def announce_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/announce_group — Post the current active announcement to the Telegram group."""
-    user = update.effective_user
-    if not _guard(user):
-        await update.effective_message.reply_text("⛔ Admin only.")
-        return
-
-    loop = asyncio.get_running_loop()
-    ann = await loop.run_in_executor(None, get_active_announcement)
-    if not ann:
-        await update.effective_message.reply_text(
-            "⚠️ No active announcement to post.\n"
-            "Create one with <code>/pin &lt;message&gt;</code> first.",
-            parse_mode="HTML",
-        )
-        return
-
-    if not TELEGRAM_GROUP_ID:
-        await update.effective_message.reply_text(
-            "❌ <code>TELEGRAM_GROUP_ID</code> is not configured.\n"
-            "Set it in Railway environment variables.",
-            parse_mode="HTML",
-        )
-        return
-
-    await update.effective_message.reply_text("📤 Posting to group…")
-    ok, status = await post_to_group(context.bot, ann)
-    await update.effective_message.reply_text(
-        f"<b>Group Post Result:</b>\n{status}",
-        parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
-    )
-    log.info("Admin posted to group: user=%s ok=%s", user.id, ok)
-
-
-# ── /announce_both ─────────────────────────────────────────────────────────────
-
-async def announce_both_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/announce_both — Post the current active announcement to BOTH channel and group."""
-    user = update.effective_user
-    if not _guard(user):
-        await update.effective_message.reply_text("⛔ Admin only.")
-        return
-
-    loop = asyncio.get_running_loop()
-    ann = await loop.run_in_executor(None, get_active_announcement)
-    if not ann:
-        await update.effective_message.reply_text(
-            "⚠️ No active announcement to post.\n"
-            "Create one with <code>/pin &lt;message&gt;</code> first.",
-            parse_mode="HTML",
-        )
-        return
-
-    if not TELEGRAM_CHANNEL_ID and not TELEGRAM_GROUP_ID:
-        await update.effective_message.reply_text(
-            "❌ Neither TELEGRAM_CHANNEL_ID nor TELEGRAM_GROUP_ID are configured.\n"
-            "Set them in Railway environment variables.",
-            parse_mode="HTML",
-        )
-        return
-
-    await update.effective_message.reply_text("📤 Posting to channel and group…")
-
-    results = []
-    if TELEGRAM_CHANNEL_ID:
-        ok, status = await post_to_channel(context.bot, ann)
-        results.append(f"📢 Channel: {status}")
-
-    if TELEGRAM_GROUP_ID:
-        ok, status = await post_to_group(context.bot, ann)
-        results.append(f"👥 Group: {status}")
-
-    await update.effective_message.reply_text(
-        "<b>Broadcast Result:</b>\n" + "\n".join(results),
-        parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
-    )
-    log.info("Admin posted to both: user=%s", user.id)
-
-
-# ── /listannouncements ─────────────────────────────────────────────────────────
+# ── /listannouncements ────────────────────────────────────────────────────────
 
 async def listannouncements_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/listannouncements — View announcement history (latest 10)."""
@@ -479,7 +300,7 @@ async def listannouncements_handler(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text("⛔ Admin only.")
         return
 
-    loop = asyncio.get_running_loop()
+    loop    = asyncio.get_running_loop()
     history = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
 
     if not history:
@@ -506,5 +327,191 @@ async def listannouncements_handler(update: Update, context: ContextTypes.DEFAUL
     await update.effective_message.reply_text(
         "\n\n".join(lines),
         parse_mode="HTML",
-        reply_markup=admin_announcements_keyboard(),
+        reply_markup=back_to_menu(),
+    )
+
+
+# ── /announce_channel ─────────────────────────────────────────────────────────
+
+async def announce_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_channel — Push the active announcement to the Telegram channel."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_CHANNEL_ID
+    if not TELEGRAM_CHANNEL_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>TELEGRAM_CHANNEL_ID is not set.</b>\n\n"
+            "Add it to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+
+    try:
+        if photo_url:
+            await context.bot.send_photo(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        await update.effective_message.reply_text(
+            "✅ <b>Announcement sent to channel!</b>",
+            parse_mode="HTML",
+        )
+        log.info("Announcement pushed to channel by admin %s", user.id)
+    except Exception as exc:
+        await update.effective_message.reply_text(
+            f"❌ Failed to send to channel:\n<code>{html.escape(str(exc))}</code>\n\n"
+            "Make sure the bot is an admin in the channel.",
+            parse_mode="HTML",
+        )
+        log.error("announce_channel: %s", exc)
+
+
+# ── /announce_group ───────────────────────────────────────────────────────────
+
+async def announce_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_group — Push the active announcement to the Telegram group."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_GROUP_ID
+    if not TELEGRAM_GROUP_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>TELEGRAM_GROUP_ID is not set.</b>\n\n"
+            "Add it to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+
+    try:
+        if photo_url:
+            await context.bot.send_photo(
+                chat_id=TELEGRAM_GROUP_ID,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=TELEGRAM_GROUP_ID,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        await update.effective_message.reply_text(
+            "✅ <b>Announcement sent to group!</b>",
+            parse_mode="HTML",
+        )
+        log.info("Announcement pushed to group by admin %s", user.id)
+    except Exception as exc:
+        await update.effective_message.reply_text(
+            f"❌ Failed to send to group:\n<code>{html.escape(str(exc))}</code>\n\n"
+            "Make sure the bot is an admin in the group.",
+            parse_mode="HTML",
+        )
+        log.error("announce_group: %s", exc)
+
+
+# ── /announce_both ────────────────────────────────────────────────────────────
+
+async def announce_both_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/announce_both — Push the active announcement to both channel and group."""
+    user = update.effective_user
+    if not _guard(user):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+
+    from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID
+    if not TELEGRAM_CHANNEL_ID and not TELEGRAM_GROUP_ID:
+        await update.effective_message.reply_text(
+            "⚠️ <b>Neither TELEGRAM_CHANNEL_ID nor TELEGRAM_GROUP_ID is set.</b>\n\n"
+            "Add them to Railway environment variables and redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_running_loop()
+    ann  = await loop.run_in_executor(None, get_active_announcement)
+    if not ann:
+        await update.effective_message.reply_text(
+            "📭 <b>No active announcement.</b>\n\n"
+            "Create one first with <code>/pin &lt;message&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    card      = format_announcement_card(ann.get("message", ""))
+    photo_url = ann.get("photo_url") or ""
+    results   = []
+
+    for label, chat_id in [("channel", TELEGRAM_CHANNEL_ID), ("group", TELEGRAM_GROUP_ID)]:
+        if not chat_id:
+            results.append(f"⏭️ {label.capitalize()}: skipped (ID not configured)")
+            continue
+        try:
+            if photo_url:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_url,
+                    caption=card,
+                    parse_mode="HTML",
+                    reply_markup=announcement_keyboard(SUPPORT_URL),
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=card,
+                    parse_mode="HTML",
+                    reply_markup=announcement_keyboard(SUPPORT_URL),
+                )
+            results.append(f"✅ {label.capitalize()}: sent")
+            log.info("Announcement pushed to %s by admin %s", label, user.id)
+        except Exception as exc:
+            results.append(f"❌ {label.capitalize()}: {html.escape(str(exc))}")
+            log.error("announce_both → %s: %s", label, exc)
+
+    await update.effective_message.reply_text(
+        "<b>📢 Broadcast Results:</b>\n\n" + "\n".join(results),
+        parse_mode="HTML",
     )

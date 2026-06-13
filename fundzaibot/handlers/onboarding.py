@@ -2,9 +2,6 @@
 FundzAiBot — Onboarding handler.
 Manages the new-user onboarding flow: welcome popup, channel/group join,
 membership verification, reward granting, and admin controls.
-
-After onboarding completes, the active sticky announcement is shown using
-send_sticky_announcement() which pins it natively in the user's Telegram chat.
 """
 
 import asyncio
@@ -31,6 +28,7 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 
+# ── Source labels used in referral-aware messaging ────────────────────────────
 _SOURCE_LABELS = {
     "channel":  "channel",
     "group":    "community group",
@@ -41,6 +39,7 @@ _SOURCE_LABELS = {
 
 
 def _source_from_args(args: list[str]) -> str:
+    """Determine referral_source from /start deep-link args."""
     if not args:
         return "direct"
     code = args[0]
@@ -54,11 +53,16 @@ def _source_from_args(args: list[str]) -> str:
 
 
 def _onboarding_text(source: str, first_name: str) -> str:
-    channel_has = bool(TELEGRAM_CHANNEL_ID)
-    group_has   = bool(TELEGRAM_GROUP_ID)
+    """
+    Build the onboarding welcome message, adapted to the user's referral source.
+    """
+    channel_has  = bool(TELEGRAM_CHANNEL_ID)
+    group_has    = bool(TELEGRAM_GROUP_ID)
 
+    # Base greeting
     greet = f"👋 <b>Welcome to FundzAiBot, {first_name}!</b>\n\n"
 
+    # Source-aware intro
     if source == "channel":
         intro = (
             "You found us through our channel — great!\n\n"
@@ -83,6 +87,7 @@ def _onboarding_text(source: str, first_name: str) -> str:
             "Before you dive in, join our official community to unlock <b>bonus credits</b> and stay updated!"
         )
 
+    # Rewards block
     rewards = []
     if channel_has:
         rewards.append(
@@ -109,48 +114,53 @@ def _onboarding_text(source: str, first_name: str) -> str:
 
 
 def _onboarding_keyboard(source: str, row: dict | None) -> InlineKeyboardMarkup:
-    channel_has = bool(TELEGRAM_CHANNEL_ID)
-    group_has   = bool(TELEGRAM_GROUP_ID)
-    ch_joined   = (row or {}).get("channel_joined", False)
-    grp_joined  = (row or {}).get("group_joined", False)
+    """Build the onboarding inline keyboard based on current join state."""
+    channel_has   = bool(TELEGRAM_CHANNEL_ID)
+    group_has     = bool(TELEGRAM_GROUP_ID)
+    ch_joined     = (row or {}).get("channel_joined", False)
+    grp_joined    = (row or {}).get("group_joined", False)
 
     buttons = []
 
+    # Channel button
     if channel_has:
         ch_label = f"✅ {TELEGRAM_CHANNEL_NAME}" if ch_joined else f"📢 Join {TELEGRAM_CHANNEL_NAME}"
         buttons.append([InlineKeyboardButton(ch_label, url=TELEGRAM_CHANNEL_URL)])
 
+    # Group button
     if group_has:
         grp_label = f"✅ {TELEGRAM_GROUP_NAME}" if grp_joined else f"👥 Join {TELEGRAM_GROUP_NAME}"
         buttons.append([InlineKeyboardButton(grp_label, url=TELEGRAM_GROUP_URL)])
 
+    # If at least one community exists, show verify button
     if channel_has or group_has:
         buttons.append([
             InlineKeyboardButton("✅ I've Joined — Verify & Claim Rewards", callback_data="onboarding:verify")
         ])
 
+    # Continue button (always visible but labelled differently)
     if ONBOARDING_REQUIRED and (channel_has or group_has):
         if ch_joined or grp_joined:
             buttons.append([InlineKeyboardButton("🚀 Continue to Bot »", callback_data="onboarding:continue")])
     else:
-        continue_label = (
-            "🚀 Continue to Bot »"
-            if (ch_joined or grp_joined or not (channel_has or group_has))
-            else "⏩ Skip for Now"
-        )
+        # Skip / Continue always available when not required
+        continue_label = "🚀 Continue to Bot »" if (ch_joined or grp_joined or not (channel_has or group_has)) else "⏩ Skip for Now"
         buttons.append([InlineKeyboardButton(continue_label, callback_data="onboarding:continue")])
 
     return InlineKeyboardMarkup(buttons)
 
 
 async def show_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE, source: str = "direct") -> None:
-    """Send the onboarding popup. Called from start_handler for new/incomplete users."""
+    """
+    Send the onboarding popup to the user.
+    Called from start_handler for new/incomplete users.
+    """
     user = update.effective_user
     if not user:
         return
 
     loop = asyncio.get_running_loop()
-    row  = await loop.run_in_executor(None, get_onboarding, user.id)
+    row = await loop.run_in_executor(None, get_onboarding, user.id)
     text = _onboarding_text(source, user.first_name or "friend")
     kbd  = _onboarding_keyboard(source, row)
 
@@ -159,17 +169,21 @@ async def show_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE, so
 
 
 async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Callback: user tapped 'I've Joined'. Verify via Telegram API, grant rewards."""
+    """
+    Callback: user tapped 'I've Joined'.
+    Verify membership via Telegram API, grant rewards, update keyboard.
+    """
     user = query.from_user
     loop = asyncio.get_running_loop()
 
     channel_has = bool(TELEGRAM_CHANNEL_ID)
     group_has   = bool(TELEGRAM_GROUP_ID)
 
-    ch_ok       = False
-    grp_ok      = False
+    ch_ok  = False
+    grp_ok = False
     rewards_text = []
 
+    # ── Check channel membership ──────────────────────────────────────────────
     if channel_has:
         try:
             member = await context.bot.get_chat_member(
@@ -178,7 +192,8 @@ async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) ->
             ch_ok = member.status in ("creator", "administrator", "member", "restricted")
         except TelegramError as exc:
             log.warning("Channel membership check failed for user %s: %s", user.id, exc)
-            ch_ok = True  # Graceful degradation if bot lacks permission
+            # Graceful degradation: if bot lacks permission, assume joined
+            ch_ok = True
 
         if ch_ok:
             await loop.run_in_executor(None, mark_channel_joined, user.id)
@@ -188,6 +203,7 @@ async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) ->
                     f"📢 Channel: +{ONBOARDING_CHANNEL_REWARD_CHAT} chat & +{ONBOARDING_CHANNEL_REWARD_IMAGE} image credit"
                 )
 
+    # ── Check group membership ────────────────────────────────────────────────
     if group_has:
         try:
             member = await context.bot.get_chat_member(
@@ -206,11 +222,15 @@ async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) ->
                     f"👥 Group: +{ONBOARDING_GROUP_REWARD_CHAT} chat & +{ONBOARDING_GROUP_REWARD_IMAGE} image credit"
                 )
 
-    row    = await loop.run_in_executor(None, get_onboarding, user.id)
-    row    = row or {}
-    source = row.get("referral_source", "direct")
-    kbd    = _onboarding_keyboard(source, row)
+    # ── Refresh row and rebuild keyboard ──────────────────────────────────────
+    row = await loop.run_in_executor(None, get_onboarding, user.id)
+    row = row or {}
 
+    # Determine source from stored row
+    source = row.get("referral_source", "direct")
+    kbd = _onboarding_keyboard(source, row)
+
+    # ── Build response message ────────────────────────────────────────────────
     joined_any = ch_ok or grp_ok
 
     if not joined_any and (channel_has or group_has):
@@ -236,6 +256,7 @@ async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
     else:
+        # Already rewarded or no new rewards
         await query.answer("Already verified! Tap Continue to start.", show_alert=False)
         try:
             await query.edit_message_reply_markup(reply_markup=kbd)
@@ -244,10 +265,14 @@ async def handle_onboarding_verify(query, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def handle_onboarding_continue(query, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Callback: user tapped 'Continue to Bot' / 'Skip'. Mark complete, show main menu."""
+    """
+    Callback: user tapped 'Continue to Bot' / 'Skip'.
+    Mark onboarding complete and trigger the normal start flow.
+    """
     user = query.from_user
     loop = asyncio.get_running_loop()
 
+    # If required mode is on, check at least one community joined
     if ONBOARDING_REQUIRED and (TELEGRAM_CHANNEL_ID or TELEGRAM_GROUP_ID):
         row = await loop.run_in_executor(None, get_onboarding, user.id)
         row = row or {}
@@ -261,28 +286,21 @@ async def handle_onboarding_continue(query, context: ContextTypes.DEFAULT_TYPE) 
     await loop.run_in_executor(None, mark_onboarding_complete, user.id)
     await query.answer("Welcome to FundzAiBot! 🚀")
 
+    # Show the normal start welcome
+    from config.settings import FREE_DAILY_CHAT, FREE_DAILY_IMAGE
     from utils.keyboards import main_menu
-    from services.database import get_or_create_user, set_system_prompt, get_active_announcement
+    from services.database import get_or_create_user, set_system_prompt
+    from services.database import get_active_announcement
+    from services.language import get_string, get_user_language
 
     db_user = await loop.run_in_executor(
-        None,
-        lambda: get_or_create_user(user.id, first_name=user.first_name or "", username=user.username or ""),
+        None, lambda: get_or_create_user(user.id, first_name=user.first_name or "", username=user.username or "")
     )
     style = (db_user or {}).get("ai_style", "default")
+    lang  = get_user_language(db_user, user.id)
     await loop.run_in_executor(None, set_system_prompt, user.id, style)
 
-    welcome = (
-        f"✨ <b>Welcome to FundzAiBot!</b>\n\n"
-        f"Your intelligent AI assistant — powered by GPT-4, Gemini &amp; Stable Diffusion.\n\n"
-        f"<b>What I can do:</b>\n"
-        f"🤖 <b>AI Chat</b> — Ask me anything, in 8 different styles\n"
-        f"🎨 <b>Image Gen</b> — Describe a scene and I'll create it\n"
-        f"📊 <b>Smart Memory</b> — I remember our conversation context\n"
-        f"🔗 <b>Referral Rewards</b> — Invite friends, earn bonus credits\n"
-        f"💎 <b>VIP Plans</b> — Unlock unlimited power\n\n"
-        f"You start with <b>{FREE_DAILY_CHAT} daily chats</b> and <b>{FREE_DAILY_IMAGE} daily images</b>. Free.\n\n"
-        f"Tap a button below to get started! 👇"
-    )
+    welcome = get_string(lang, "welcome_new", chat=FREE_DAILY_CHAT, image=FREE_DAILY_IMAGE)
 
     try:
         await query.edit_message_text(welcome, parse_mode="HTML", reply_markup=main_menu())
@@ -292,22 +310,41 @@ async def handle_onboarding_continue(query, context: ContextTypes.DEFAULT_TYPE) 
         except Exception:
             pass
 
-    # Show the active announcement with native sticky Telegram pin
+    # Show active announcement if any
     try:
         ann = await loop.run_in_executor(None, get_active_announcement)
         if ann:
-            from handlers.announcements import send_sticky_announcement
-            await send_sticky_announcement(context.bot, user.id, ann, pin=True)
+            from handlers.announcements import format_announcement_card
+            from utils.keyboards import announcement_keyboard
+            from services.database import get_announcement_history
+            history   = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
+            ann_count = len(history)
+            msg       = ann.get("message", "")
+            photo_url = ann.get("photo_url")
+            card      = format_announcement_card(msg, lang=lang)
+            kbd       = announcement_keyboard(ann_count=ann_count, ann_idx=0)
+            if photo_url:
+                try:
+                    await context.bot.send_photo(
+                        user.id, photo=photo_url, caption=card,
+                        parse_mode="HTML", reply_markup=kbd,
+                    )
+                except Exception:
+                    await context.bot.send_message(user.id, card, parse_mode="HTML", reply_markup=kbd)
+            else:
+                await context.bot.send_message(user.id, card, parse_mode="HTML", reply_markup=kbd)
     except Exception as exc:
         log.debug("Announcement after onboarding skipped: %s", exc)
 
     log.info("Onboarding completed for user=%s", user.id)
 
 
-# ── Admin controls ─────────────────────────────────────────────────────────────
+# ── Admin controls ────────────────────────────────────────────────────────────
 
 async def admin_onboarding_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_onboarding — Show onboarding stats and settings for admins."""
+    """
+    /admin_onboarding — Show onboarding stats and settings for admins.
+    """
     user = update.effective_user
     if not user or not is_admin(user.id):
         await update.message.reply_text("❌ Admin only.")
@@ -340,13 +377,17 @@ async def admin_onboarding_handler(update: Update, context: ContextTypes.DEFAULT
         f"  🔒 Required mode: {'✅ ON' if ONBOARDING_REQUIRED else '❌ OFF (users can skip)'}\n\n"
         f"<b>🛠️ How to configure:</b>\n"
         f"Set these Railway environment variables:\n"
-        f"  <code>TELEGRAM_CHANNEL_ID</code>  — @username or numeric ID\n"
+        f"  <code>TELEGRAM_CHANNEL_ID</code> — @username or numeric ID\n"
         f"  <code>TELEGRAM_CHANNEL_URL</code> — invite link\n"
         f"  <code>TELEGRAM_CHANNEL_NAME</code> — display name\n"
-        f"  <code>TELEGRAM_GROUP_ID</code>    — @username or numeric ID\n"
-        f"  <code>TELEGRAM_GROUP_URL</code>   — invite link\n"
-        f"  <code>TELEGRAM_GROUP_NAME</code>  — display name\n"
-        f"  <code>ONBOARDING_REQUIRED</code>  — true/false\n"
+        f"  <code>TELEGRAM_GROUP_ID</code> — @username or numeric ID\n"
+        f"  <code>TELEGRAM_GROUP_URL</code> — invite link\n"
+        f"  <code>TELEGRAM_GROUP_NAME</code> — display name\n"
+        f"  <code>ONBOARDING_CHANNEL_REWARD_CHAT</code> — default 5\n"
+        f"  <code>ONBOARDING_CHANNEL_REWARD_IMAGE</code> — default 1\n"
+        f"  <code>ONBOARDING_GROUP_REWARD_CHAT</code> — default 5\n"
+        f"  <code>ONBOARDING_GROUP_REWARD_IMAGE</code> — default 1\n"
+        f"  <code>ONBOARDING_REQUIRED</code> — true/false\n"
     )
 
     kbd = InlineKeyboardMarkup([[

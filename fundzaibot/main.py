@@ -120,39 +120,50 @@ async def post_init(application: Application) -> None:
     """Register bot commands and start background services after bot connects."""
     from config.settings import ADMIN_USER_ID
 
-    # ── Public commands — visible to ALL users (keep short & clean) ───────────
-    # Admin sub-commands (/admin_ban, /admin_users, etc.) are NOT listed here.
-    # They remain fully functional — accessed via the /admin panel buttons.
+    # ── Public commands — visible to ALL users ────────────────────────────────
     public_commands = [
-        BotCommand("start",      "🏠 Open the main menu"),
-        BotCommand("chat",       "💬 Chat with AI (with memory)"),
-        BotCommand("ask",        "⚡ Quick question (no memory)"),
-        BotCommand("image",      "🎨 Generate an AI image"),
-        BotCommand("profile",    "👤 Your profile & credits"),
-        BotCommand("subscribe",  "⭐ VIP plans & Telegram Stars"),
-        BotCommand("referral",   "🎁 Referral link & rewards"),
-        BotCommand("language",   "🌍 Change bot language"),
-        BotCommand("help",       "❓ Help guide & all commands"),
-        BotCommand("feedback",   "📝 Send feedback or report a bug"),
+        BotCommand("start",       "Open the main menu"),
+        BotCommand("help",        "Full help guide"),
+        BotCommand("about",       "About FundzAiBot"),
+        BotCommand("chat",        "AI conversation (with memory)"),
+        BotCommand("ask",         "Quick one-shot question (no memory)"),
+        BotCommand("code",        "Code generation & debugging"),
+        BotCommand("summarize",   "Summarize text or a replied message"),
+        BotCommand("translate",   "Translate to any language"),
+        BotCommand("analyze",     "Analyze a photo with Gemini Vision"),
+        BotCommand("image",       "Generate an AI image"),
+        BotCommand("model",       "Switch AI model: GPT-4o, Claude, Gemini…"),
+        BotCommand("style",       "Change AI personality (8 modes)"),
+        BotCommand("clear",       "Clear conversation memory"),
+        BotCommand("language",    "Change bot language 🌍"),
+        BotCommand("subscribe",   "⭐ VIP plans & Telegram Stars"),
+        BotCommand("profile",     "Your profile & credits"),
+        BotCommand("stats",       "Your usage statistics"),
+        BotCommand("referral",    "Referral link & rewards"),
+        BotCommand("history",     "Image generation history"),
+        BotCommand("feedback",    "Send feedback or report a bug"),
+        BotCommand("leaderboard", "Top referrers leaderboard"),
+        BotCommand("streak",      "Your daily chat streak"),
     ]
 
-    # ── Admin-only commands — visible ONLY in the admin's private chat ─────────
-    # These appear on top of the public list so admin sees everything in one place.
-    # All /admin_* detail commands (ban, setvip, credits, logs, etc.) are hidden
-    # from the menu but remain fully functional — use /admin panel buttons instead.
-    admin_only_commands = [
-        BotCommand("admin",            "👑 Admin dashboard"),
-        BotCommand("status",           "📊 Live bot status"),
-        BotCommand("testaudit",        "🔬 Enterprise audit center"),
-        BotCommand("broadcast",        "📢 Broadcast to all users"),
-        BotCommand("pin",              "📌 Pin an announcement"),
-        BotCommand("unpin",            "📌 Remove pinned announcement"),
-        BotCommand("announce_both",    "📣 Post to channel + group"),
-        BotCommand("announce_channel", "📢 Post to channel only"),
-        BotCommand("announce_group",   "👥 Post to group only"),
-        BotCommand("testbroadcast",    "👁️ Preview active announcement"),
+    # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
+    admin_commands = public_commands + [
+        BotCommand("status",            "📊 Live bot status"),
+        BotCommand("testaudit",         "🔬 Enterprise audit center"),
+        BotCommand("broadcast",         "📢 Broadcast message to all users"),
+        BotCommand("admin",             "👑 Admin dashboard"),
+        BotCommand("admin_stats",       "📊 Platform statistics"),
+        BotCommand("admin_users",       "👥 User management"),
+        BotCommand("admin_ban",         "🚫 Ban a user"),
+        BotCommand("admin_setvip",      "💎 Set VIP status"),
+        BotCommand("admin_addcredits",  "➕ Add credits"),
+        BotCommand("admin_logs",        "📋 Recent error logs"),
+        BotCommand("admin_clearlogs",   "🗑️ Clear error logs"),
+        BotCommand("admin_health",      "🩺 AI health check"),
+        BotCommand("testbroadcast",     "👁️ Preview active announcement"),
+        BotCommand("pin",               "📌 Create announcement"),
+        BotCommand("announce_both",     "📣 Push to channel + group"),
     ]
-    admin_commands = public_commands + admin_only_commands
 
     # Set public list for everyone
     await application.bot.set_my_commands(
@@ -167,7 +178,6 @@ async def post_init(application: Application) -> None:
                 admin_commands,
                 scope=BotCommandScopeChat(chat_id=ADMIN_USER_ID),
             )
-            log.info("Admin-scoped commands set for user_id=%s.", ADMIN_USER_ID)
         except Exception as exc:
             log.warning("Could not set admin-scoped commands: %s", exc)
 
@@ -183,14 +193,14 @@ async def error_handler(update, context) -> None:
     Global error handler — three tiers:
 
     1. 'Message is not modified' (BadRequest) → silently ignored.
-       This is a harmless Telegram quirk when a callback button is tapped twice
-       and the resulting edit_message_text sends identical content.
+       This is a harmless Telegram quirk when a callback button is tapped twice.
 
     2. Transient infrastructure errors (Bad Gateway, NetworkError, TimedOut,
-       httpx.ReadError, connection resets) → logged at WARNING, NOT written to DB.
-       These are Railway/Telegram blips, not real application bugs.
+       httpx.ReadError, connection resets) → logged at WARNING.
+       A user-friendly retry message IS sent so users are never left in silence.
 
-    3. Everything else → logged as ERROR, written to Supabase error log.
+    3. Everything else → logged as ERROR, written to Supabase error log,
+       user-friendly error message sent.
     """
     from telegram.error import BadRequest, NetworkError, TimedOut
     from services.database import log_error
@@ -219,7 +229,15 @@ async def error_handler(update, context) -> None:
         or any(s in err.lower() for s in _transient_strings)
     )
     if is_transient:
-        log.warning("Transient infra error (skipped DB write): %.120s", err)
+        log.warning("Transient infra error: %.120s", err)
+        # Still inform the user — never leave them in silence
+        if update and update.effective_message and not (update.callback_query):
+            try:
+                await update.effective_message.reply_text(
+                    "⚠️ A temporary network issue occurred. Please try again in a moment."
+                )
+            except Exception:
+                pass
         return
 
     # ── Tier 3: real application errors ───────────────────────────────────────
@@ -461,8 +479,8 @@ def main() -> None:
             "message",
             "callback_query",
             "pre_checkout_query",
-            "chat_member",          # required for membership_change_handler
-            "my_chat_member",       # required for bot added/removed events
+            "chat_member",
+            "my_chat_member",
         ],
     )
 

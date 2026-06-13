@@ -39,6 +39,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     uid = user.id
     admin = is_admin(uid)
 
+    log.info("[CHAT] STAGE 1 — message received: user=%s text=%.60r", uid, text)
+
     # ── Maintenance mode — only admin can proceed ──────────────────────────────
     if FEATURE_FLAGS["maintenance_mode"] and not admin:
         await message.reply_text(
@@ -67,84 +69,142 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    loop = asyncio.get_running_loop()
-
-    # All DB calls are blocking — run in executor so we don't block the event loop
-    db_user = await loop.run_in_executor(
-        None,
-        lambda: get_or_create_user(
-            uid,
-            first_name=user.first_name or "",
-            last_name=user.last_name or "",
-            username=user.username or "",
-        ),
-    )
-
-    if db_user.get("is_banned"):
-        await message.reply_text("🚫 You have been banned from using FundzAiBot.")
-        return
-
-    # Admin is never VIP-gated; check expiry for regular users
-    is_vip = True if admin else await loop.run_in_executor(None, check_and_fix_vip_expiry, db_user)
-
-    allowed, reason = await loop.run_in_executor(None, can_use_chat, uid, is_vip)
-    if not allowed:
-        await message.reply_text(
-            f"❌ <b>{html.escape(reason)}</b>\n\n"
-            "💡 Earn more credits:\n"
-            "• Invite friends with /referral (+10 chats each)\n"
-            "• Upgrade to 💎 VIP for 500+/day",
-            parse_mode="HTML",
-            reply_markup=main_menu(),
-        )
-        return
-
-    prompt = sanitise_prompt(text)
-
-    # Show typing indicator + loading message
-    await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
-    thinking = await message.reply_text("💭 <i>Thinking…</i>", parse_mode="HTML")
-
-    # Build conversation history from Supabase (blocking — run in executor)
-    history = await loop.run_in_executor(None, get_conversation, uid, 20)
-    if not any(m["role"] == "system" for m in history):
-        style = db_user.get("ai_style", "default")
-        await loop.run_in_executor(None, set_system_prompt, uid, style)
-        history = await loop.run_in_executor(None, get_conversation, uid, 20)
-
-    # Add user message to history for this request
-    messages_for_ai = history + [{"role": "user", "content": prompt}]
-
-    # ── CRITICAL: AI call is synchronous (requests) — must run in executor ──────
-    response, provider = await loop.run_in_executor(None, get_ai_response, messages_for_ai)
-
-    # Persist both turns to Supabase (non-blocking in executor)
-    await loop.run_in_executor(None, save_message, uid, "user", prompt)
-    await loop.run_in_executor(None, save_message, uid, "assistant", response)
-
-    # Deduct credit (admin usage is tracked but not limited)
-    await loop.run_in_executor(None, increment_chat, uid)
-
+    thinking = None
     try:
-        await thinking.delete()
-    except Exception:
-        pass
+        loop = asyncio.get_running_loop()
 
-    # Use admin main menu for admin, regular menu otherwise
-    reply_markup = admin_main_menu() if admin else main_menu()
+        # ── STAGE 2: Load/create user from DB ─────────────────────────────────
+        log.info("[CHAT] STAGE 2 — loading user from DB: user=%s", uid)
+        db_user = await loop.run_in_executor(
+            None,
+            lambda: get_or_create_user(
+                uid,
+                first_name=user.first_name or "",
+                last_name=user.last_name or "",
+                username=user.username or "",
+            ),
+        )
 
-    chunks = chunk_text(response, size=4000)
-    for i, chunk in enumerate(chunks):
-        is_last = i == len(chunks) - 1
-        try:
+        if db_user.get("is_banned"):
+            await message.reply_text("🚫 You have been banned from using FundzAiBot.")
+            return
+
+        # ── STAGE 3: Credit check ──────────────────────────────────────────────
+        log.info("[CHAT] STAGE 3 — checking credits: user=%s", uid)
+        is_vip = True if admin else await loop.run_in_executor(None, check_and_fix_vip_expiry, db_user)
+
+        allowed, reason = await loop.run_in_executor(None, can_use_chat, uid, is_vip)
+        if not allowed:
             await message.reply_text(
-                chunk,
-                reply_markup=reply_markup if is_last else None,
+                f"❌ <b>{html.escape(reason)}</b>\n\n"
+                "💡 Earn more credits:\n"
+                "• Invite friends with /referral (+10 chats each)\n"
+                "• Upgrade to 💎 VIP for 500+/day",
+                parse_mode="HTML",
+                reply_markup=main_menu(),
             )
-        except Exception as exc:
-            log.warning("Failed to send chunk %d: %s", i, exc)
+            return
 
-    log.info("Chat: user=%s admin=%s provider=%s len=%d", uid, admin, provider, len(response))
+        prompt = sanitise_prompt(text)
+
+        # ── STAGE 4: Send typing + thinking indicator ──────────────────────────
+        log.info("[CHAT] STAGE 4 — sending thinking indicator: user=%s", uid)
+        await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
+        thinking = await message.reply_text("💭 <i>Thinking…</i>", parse_mode="HTML")
+
+        # ── STAGE 5: Load conversation history ────────────────────────────────
+        log.info("[CHAT] STAGE 5 — loading conversation history: user=%s", uid)
+        history = await loop.run_in_executor(None, get_conversation, uid, 20)
+        if not any(m["role"] == "system" for m in history):
+            style = db_user.get("ai_style", "default")
+            await loop.run_in_executor(None, set_system_prompt, uid, style)
+            history = await loop.run_in_executor(None, get_conversation, uid, 20)
+
+        messages_for_ai = history + [{"role": "user", "content": prompt}]
+        log.info("[CHAT] STAGE 5 — history loaded: %d messages", len(messages_for_ai))
+
+        # ── STAGE 6: Call AI provider ──────────────────────────────────────────
+        log.info("[CHAT] STAGE 6 — calling AI provider: user=%s", uid)
+        response, provider = await loop.run_in_executor(None, get_ai_response, messages_for_ai)
+        log.info("[CHAT] STAGE 6 — AI response received: provider=%s len=%d", provider, len(response))
+
+        if not response or not response.strip():
+            log.error("[CHAT] STAGE 6 — AI returned empty response: user=%s", uid)
+            response = "⚠️ AI returned an empty response. Please try again."
+
+        # ── STAGE 7: Persist conversation ──────────────────────────────────────
+        log.info("[CHAT] STAGE 7 — saving conversation: user=%s", uid)
+        await loop.run_in_executor(None, save_message, uid, "user", prompt)
+        await loop.run_in_executor(None, save_message, uid, "assistant", response)
+        await loop.run_in_executor(None, increment_chat, uid)
+
+        # ── STAGE 8: Send reply ────────────────────────────────────────────────
+        log.info("[CHAT] STAGE 8 — sending reply: user=%s chunks=%d", uid, len(chunk_text(response)))
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        thinking = None
+
+        reply_markup = admin_main_menu() if admin else main_menu()
+        chunks = chunk_text(response, size=4000)
+
+        if not chunks:
+            log.error("[CHAT] STAGE 8 — chunk_text returned empty list: user=%s", uid)
+            await message.reply_text(
+                "⚠️ Received an empty response. Please try again.",
+                reply_markup=reply_markup,
+            )
+            return
+
+        sent_any = False
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            try:
+                await message.reply_text(
+                    chunk,
+                    reply_markup=reply_markup if is_last else None,
+                )
+                sent_any = True
+            except Exception as exc:
+                log.error("[CHAT] STAGE 8 — failed to send chunk %d: %s", i, exc)
+
+        if not sent_any:
+            log.error("[CHAT] STAGE 8 — all chunks failed to send: user=%s", uid)
+            try:
+                await message.reply_text(
+                    "⚠️ Failed to deliver the AI response. Please try again.",
+                    reply_markup=reply_markup,
+                )
+            except Exception as exc:
+                log.error("[CHAT] STAGE 8 — fallback reply also failed: %s", exc)
+
+        log.info("[CHAT] DONE: user=%s admin=%s provider=%s len=%d", uid, admin, provider, len(response))
+
+    except Exception as exc:
+        log.error("[CHAT] UNHANDLED EXCEPTION: user=%s error=%s", uid, exc, exc_info=True)
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: log_error("chat_handler_crash", str(exc)[:500], user_id=uid),
+            )
+        except Exception:
+            pass
+        if thinking:
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+        try:
+            reply_markup = admin_main_menu() if admin else main_menu()
+            await message.reply_text(
+                "⚠️ <b>Something went wrong processing your message.</b>\n\n"
+                "Please try again in a moment. If the issue persists, use /help for support.",
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        except Exception as final_exc:
+            log.error("[CHAT] Could not send error fallback: %s", final_exc)
 
 
 async def clear_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

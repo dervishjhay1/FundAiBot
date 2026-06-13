@@ -26,6 +26,7 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
@@ -66,6 +67,7 @@ from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
 from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter
+from handlers.membership import membership_change_handler
 from handlers.profile import profile_handler, referral_handler, history_handler, stats_handler
 from handlers.payment import subscribe_handler, precheckout_handler, successful_payment_handler
 from handlers.start import start_handler
@@ -191,14 +193,14 @@ async def error_handler(update, context) -> None:
     Global error handler — three tiers:
 
     1. 'Message is not modified' (BadRequest) → silently ignored.
-       This is a harmless Telegram quirk when a callback button is tapped twice
-       and the resulting edit_message_text sends identical content.
+       This is a harmless Telegram quirk when a callback button is tapped twice.
 
     2. Transient infrastructure errors (Bad Gateway, NetworkError, TimedOut,
-       httpx.ReadError, connection resets) → logged at WARNING, NOT written to DB.
-       These are Railway/Telegram blips, not real application bugs.
+       httpx.ReadError, connection resets) → logged at WARNING.
+       A user-friendly retry message IS sent so users are never left in silence.
 
-    3. Everything else → logged as ERROR, written to Supabase error log.
+    3. Everything else → logged as ERROR, written to Supabase error log,
+       user-friendly error message sent.
     """
     from telegram.error import BadRequest, NetworkError, TimedOut
     from services.database import log_error
@@ -227,7 +229,15 @@ async def error_handler(update, context) -> None:
         or any(s in err.lower() for s in _transient_strings)
     )
     if is_transient:
-        log.warning("Transient infra error (skipped DB write): %.120s", err)
+        log.warning("Transient infra error: %.120s", err)
+        # Still inform the user — never leave them in silence
+        if update and update.effective_message and not (update.callback_query):
+            try:
+                await update.effective_message.reply_text(
+                    "⚠️ A temporary network issue occurred. Please try again in a moment."
+                )
+            except Exception:
+                pass
         return
 
     # ── Tier 3: real application errors ───────────────────────────────────────
@@ -363,6 +373,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ai", group_ai_handler, filters=filters.ChatType.GROUPS))
     # Welcome new group members
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
+    # Membership monitoring — detects when users leave the channel or group
+    # Requires "Track all member changes" enabled in Bot Settings on Telegram
+    app.add_handler(ChatMemberHandler(membership_change_handler))
     # @mention reply — group 1 so it runs alongside spam_filter
     app.add_handler(
         MessageHandler(
@@ -462,7 +475,13 @@ def main() -> None:
     log.info("Starting Telegram polling — Railway-only production instance.")
     app.run_polling(
         drop_pending_updates=True,
-        allowed_updates=["message", "callback_query", "pre_checkout_query"],
+        allowed_updates=[
+            "message",
+            "callback_query",
+            "pre_checkout_query",
+            "chat_member",
+            "my_chat_member",
+        ],
     )
 
 

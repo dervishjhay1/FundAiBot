@@ -439,12 +439,32 @@ async def admin_images_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 @admin_only
 async def admin_health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from services.ai_service import check_provider_health
-    msg = await update.effective_message.reply_text("🔍 Checking provider health…")
+    from config.settings import OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL, OPENROUTER_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY
+    msg = await update.effective_message.reply_text("🔍 Checking AI provider health… (may take ~10s)")
     loop = asyncio.get_running_loop()
     statuses = await loop.run_in_executor(None, check_provider_health)
-    lines = ["<b>🩺 AI Provider Health:</b>\n"]
+
+    or_key  = "✅ set" if OPENROUTER_API_KEY  else "❌ missing"
+    gem_key = "✅ set" if GEMINI_API_KEY      else "❌ missing"
+    hf_key  = "✅ set" if HUGGINGFACE_API_KEY else "❌ missing"
+
+    lines = [
+        "<b>🩺 AI Provider Health</b>\n",
+        "<b>Active Models:</b>",
+        f"  🔷 OpenRouter: <code>{OPENROUTER_MODEL}</code> (key: {or_key})",
+        f"  🔷 Gemini:     <code>{GEMINI_MODEL}</code> (key: {gem_key})",
+        f"  🔷 HuggingFace:<code>{HF_CHAT_MODEL}</code> (key: {hf_key})",
+        "",
+        "<b>Live Status:</b>",
+    ]
     for provider, status in statuses.items():
         lines.append(f"  {provider}: {status}")
+
+    lines += [
+        "",
+        "<i>Priority: OpenRouter → Gemini → HuggingFace</i>",
+        "<i>Use /admin_config for full config view.</i>",
+    ]
     await msg.edit_text("\n".join(lines), parse_mode="HTML")
 
 

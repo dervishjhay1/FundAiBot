@@ -31,7 +31,12 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 HUGGINGFACE_API_KEY: str = os.getenv("HUGGINGFACE_API_KEY", "")
 
 # ── AI model names ────────────────────────────────────────────────────────────
-OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
+# Default: google/gemma-3-27b-it:free — free, stable, no credits required on OpenRouter.
+# Fallback chain: google/gemma-3-27b-it:free → meta-llama/llama-3.3-70b-instruct:free
+#                 → mistralai/mistral-small-3.1-24b-instruct:free
+# Override with OPENROUTER_MODEL env var in Railway if you want a different model.
+# WARNING: "openai/gpt-3.5-turbo" causes HTTP 404 on OpenRouter — do NOT use it.
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 HF_CHAT_MODEL: str = os.getenv("HF_CHAT_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
 

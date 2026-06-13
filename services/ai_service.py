@@ -21,6 +21,15 @@ log = get_logger(__name__)
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# ── Startup provider diagnostics ──────────────────────────────────────────────
+# Logged once at import time so Railway logs show provider state on every boot.
+log.info("AI provider config — OpenRouter: %s | Gemini: %s | HuggingFace: %s",
+         "✅ KEY SET" if OPENROUTER_API_KEY else "❌ NO KEY",
+         "✅ KEY SET" if GEMINI_API_KEY     else "❌ NO KEY",
+         "✅ KEY SET" if HUGGINGFACE_API_KEY else "❌ NO KEY")
+log.info("AI model config — OpenRouter model: %s | Gemini model: %s | HF model: %s",
+         OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL)
+
 ENHANCE_PREFIX = (
     "Please respond in a clear, well-structured way. "
     "Use paragraphs, bullet points, or code blocks where appropriate. "

@@ -21,7 +21,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from telegram import BotCommand
+from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -116,26 +116,24 @@ def _bootstrap_onboarding_schema() -> None:
 
 async def post_init(application: Application) -> None:
     """Register bot commands and start background services after bot connects."""
-    await application.bot.set_my_commands([
-        # ── Core ──────────────────────────────────────────────────────────────
+    from config.settings import ADMIN_USER_ID
+
+    # ── Public commands — visible to ALL users ────────────────────────────────
+    public_commands = [
         BotCommand("start",       "Open the main menu"),
         BotCommand("help",        "Full help guide"),
         BotCommand("about",       "About FundzAiBot"),
-        # ── AI Chat ───────────────────────────────────────────────────────────
         BotCommand("chat",        "AI conversation (with memory)"),
         BotCommand("ask",         "Quick one-shot question (no memory)"),
-        BotCommand("code",        "Code generation & debugging — Replit AI mode"),
+        BotCommand("code",        "Code generation & debugging"),
         BotCommand("summarize",   "Summarize text or a replied message"),
         BotCommand("translate",   "Translate to any language"),
         BotCommand("analyze",     "Analyze a photo with Gemini Vision"),
-        # ── Models & Style ────────────────────────────────────────────────────
+        BotCommand("image",       "Generate an AI image"),
         BotCommand("model",       "Switch AI model: GPT-4o, Claude, Gemini…"),
         BotCommand("style",       "Change AI personality (8 modes)"),
         BotCommand("clear",       "Clear conversation memory"),
-        # ── Images ────────────────────────────────────────────────────────────
-        BotCommand("image",       "Generate an AI image"),
-        # ── Account ───────────────────────────────────────────────────────────
-        BotCommand("language",    "Change bot language"),
+        BotCommand("language",    "Change bot language 🌍"),
         BotCommand("subscribe",   "⭐ VIP plans & Telegram Stars"),
         BotCommand("profile",     "Your profile & credits"),
         BotCommand("stats",       "Your usage statistics"),
@@ -144,11 +142,45 @@ async def post_init(application: Application) -> None:
         BotCommand("feedback",    "Send feedback or report a bug"),
         BotCommand("leaderboard", "Top referrers leaderboard"),
         BotCommand("streak",      "Your daily chat streak"),
-        # ── Admin ─────────────────────────────────────────────────────────────
-        BotCommand("status",      "📊 Live status (admin)"),
-        BotCommand("testaudit",   "🔬 Full diagnostic center (admin)"),
-    ])
-    log.info("Bot commands registered.")
+    ]
+
+    # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
+    admin_commands = public_commands + [
+        BotCommand("status",            "📊 Live bot status"),
+        BotCommand("testaudit",         "🔬 Enterprise audit center"),
+        BotCommand("broadcast",         "📢 Broadcast message to all users"),
+        BotCommand("admin",             "👑 Admin dashboard"),
+        BotCommand("admin_stats",       "📊 Platform statistics"),
+        BotCommand("admin_users",       "👥 User management"),
+        BotCommand("admin_ban",         "🚫 Ban a user"),
+        BotCommand("admin_setvip",      "💎 Set VIP status"),
+        BotCommand("admin_addcredits",  "➕ Add credits"),
+        BotCommand("admin_logs",        "📋 Recent error logs"),
+        BotCommand("admin_clearlogs",   "🗑️ Clear error logs"),
+        BotCommand("admin_health",      "🩺 AI health check"),
+        BotCommand("testbroadcast",     "👁️ Preview active announcement"),
+        BotCommand("pin",               "📌 Create announcement"),
+        BotCommand("announce_both",     "📣 Push to channel + group"),
+    ]
+
+    # Set public list for everyone
+    await application.bot.set_my_commands(
+        public_commands,
+        scope=BotCommandScopeDefault(),
+    )
+
+    # Set full admin list — only shows up in admin's private chat
+    if ADMIN_USER_ID:
+        try:
+            await application.bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=ADMIN_USER_ID),
+            )
+        except Exception as exc:
+            log.warning("Could not set admin-scoped commands: %s", exc)
+
+    log.info("Bot commands registered (public=%d, admin=%d).",
+             len(public_commands), len(admin_commands))
     await queue_manager.start()
     mark_ready()
     log.info("Bot fully initialised — polling active.")

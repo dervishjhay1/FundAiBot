@@ -258,37 +258,110 @@ async def admin_addcredits_handler(update: Update, context: ContextTypes.DEFAULT
         await update.effective_message.reply_text(f"❌ {html.escape(str(exc))}")
 
 
-# ── /admin_broadcast <message> ────────────────────────────────────────────────
+# ── /broadcast  /admin_broadcast ──────────────────────────────────────────────
+#
+# Flow:
+#   Step 1  /broadcast <message>  →  preview card + Confirm / Cancel buttons
+#   Step 2  Confirm               →  sends DMs to all active users
+#                                    + posts to channel if configured
+#   Cancel removes the preview card.
+#
+# The raw message text is stored in context.bot_data["_bcast_pending"][admin_id]
+# so the confirm callback can retrieve it without re-parsing.
+# ─────────────────────────────────────────────────────────────────────────────
 
 @admin_only
 async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/broadcast <message>  — Preview then confirm broadcast."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_CHANNEL_NAME
+
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text("Usage: /admin_broadcast &lt;message&gt;", parse_mode="HTML")
+        await update.effective_message.reply_text(
+            "📢 <b>Broadcast Usage</b>\n\n"
+            "<code>/broadcast Your message here</code>\n\n"
+            "You'll see a preview before anything is sent.\n"
+            "Supports basic HTML: <b>bold</b>, <i>italic</i>, <code>code</code>",
+            parse_mode="HTML",
+        )
         return
-    text = html.escape(" ".join(args))
+
+    raw_text = " ".join(args)
+
+    # Store pending broadcast text keyed by admin user ID
+    pending = context.bot_data.setdefault("_bcast_pending", {})
+    pending[update.effective_user.id] = raw_text
+
     loop = asyncio.get_running_loop()
-    users = await loop.run_in_executor(None, lambda: get_all_users(limit=500))
+    users = await loop.run_in_executor(None, lambda: get_all_users(limit=2000))
     active_users = [u for u in users if not u.get("is_banned") and not is_admin(u.get("user_id", 0))]
-    status_msg = await update.effective_message.reply_text(
-        f"📢 Broadcasting to {len(active_users)} users…"
+    chan_note = f"\n📢 + will post to <b>{html.escape(TELEGRAM_CHANNEL_NAME)}</b>" if TELEGRAM_CHANNEL_ID else ""
+
+    preview_text = (
+        f"<b>📢 Broadcast Preview</b>\n\n"
+        f"<b>Recipients:</b> {len(active_users)} active users{chan_note}\n\n"
+        f"<b>Message:</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{raw_text}\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"⚠️ <i>This will send a DM to every active user. Confirm?</i>"
     )
+
+    kbd = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm & Send", callback_data="broadcast:confirm"),
+            InlineKeyboardButton("❌ Cancel",          callback_data="broadcast:cancel"),
+        ]
+    ])
+
+    await update.effective_message.reply_text(preview_text, parse_mode="HTML", reply_markup=kbd)
+
+
+async def _execute_broadcast(bot, admin_id: int, raw_text: str, status_msg) -> None:
+    """Worker: sends DMs to all active users + channel post. Edits status_msg when done."""
+    from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_CHANNEL_NAME
+
+    loop = asyncio.get_running_loop()
+    users = await loop.run_in_executor(None, lambda: get_all_users(limit=2000))
+    active_users = [u for u in users if not u.get("is_banned") and not is_admin(u.get("user_id", 0))]
+
     sent = failed = 0
     for u in active_users:
         try:
-            await context.bot.send_message(
+            await bot.send_message(
                 chat_id=u["user_id"],
-                text=f"📢 <b>Announcement from {BOT_NAME}:</b>\n\n{text}",
+                text=f"📢 <b>Announcement from {BOT_NAME}:</b>\n\n{raw_text}",
                 parse_mode="HTML",
             )
             sent += 1
         except Exception:
             failed += 1
         await asyncio.sleep(0.05)
-    await status_msg.edit_text(
-        f"📢 Broadcast complete.\n✅ Sent: {sent}  ❌ Failed: {failed}"
-    )
-    log.info("Broadcast: sent=%d failed=%d", sent, failed)
+
+    # Channel post
+    chan_result = ""
+    if TELEGRAM_CHANNEL_ID:
+        try:
+            await bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=f"📢 <b>{BOT_NAME} Announcement</b>\n\n{raw_text}",
+                parse_mode="HTML",
+            )
+            chan_result = f"\n📢 Channel: ✅ posted to {html.escape(TELEGRAM_CHANNEL_NAME)}"
+        except Exception as exc:
+            chan_result = f"\n📢 Channel: ❌ {str(exc)[:60]}"
+
+    log.info("Broadcast: admin=%s sent=%d failed=%d", admin_id, sent, failed)
+
+    try:
+        await status_msg.edit_text(
+            f"<b>📢 Broadcast Complete</b>\n\n"
+            f"✅ Sent: <b>{sent}</b>  ❌ Failed: {failed}{chan_result}",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 # ── /admin_logs ───────────────────────────────────────────────────────────────

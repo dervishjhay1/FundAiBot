@@ -5,6 +5,8 @@ VIP menu is blocked for admin. Onboarding callbacks routed here too.
 Language selection callbacks handled here.
 """
 
+import asyncio
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -39,6 +41,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     data: str = query.data or ""
     admin = is_admin(user.id)
     log.debug("Callback: user=%s admin=%s data=%s", user.id, admin, data)
+
+    # ── Broadcast confirm / cancel ────────────────────────────────────────────
+    if data.startswith("broadcast:"):
+        if not admin:
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+        action = data[len("broadcast:"):]
+
+        if action == "cancel":
+            pending = context.bot_data.get("_bcast_pending", {})
+            pending.pop(user.id, None)
+            await query.answer("Broadcast cancelled.")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.edit_message_text("📢 Broadcast cancelled.", parse_mode="HTML")
+            except Exception:
+                pass
+            return
+
+        if action == "confirm":
+            pending = context.bot_data.get("_bcast_pending", {})
+            raw_text = pending.pop(user.id, None)
+            if not raw_text:
+                await query.answer("No pending broadcast found. Run /broadcast again.", show_alert=True)
+                return
+            await query.answer("Sending…")
+            try:
+                await query.edit_message_text(
+                    "📢 <b>Broadcasting…</b>\n<i>Sending to all active users. This may take a moment.</i>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            # Run the actual broadcast — edits the status message when done
+            from handlers.admin import _execute_broadcast
+            asyncio.create_task(
+                _execute_broadcast(context.bot, user.id, raw_text, query.message)
+            )
+            return
 
     # ── Enterprise Audit Center (/testaudit callbacks) ────────────────────────
     if data.startswith("audit:"):

@@ -37,6 +37,57 @@ DEFAULT_ANNOUNCEMENT = (
 SUPPORT_URL = "https://t.me/Biodunfund"
 
 
+# ── send_sticky_announcement ──────────────────────────────────────────────────
+
+async def send_sticky_announcement(
+    bot,
+    user_id: int,
+    ann: dict,
+    pin: bool = False,
+) -> None:
+    """
+    Send the active announcement card as a DM to a user.
+
+    Used by:
+      • /start (on every visit if an announcement is active)
+      • Returning user flows
+
+    The 'pin' parameter is accepted for backward compatibility but is ignored —
+    Telegram does not support pinning messages in private chats via the bot API
+    in a useful way. The blockquote card itself provides a visually distinct
+    "pinned" feel.
+    """
+    if not ann:
+        return
+
+    message   = ann.get("message") or ""
+    photo_url = ann.get("photo_url") or ""
+
+    if not message:
+        return
+
+    card = format_announcement_card(message)
+
+    try:
+        if photo_url:
+            await bot.send_photo(
+                chat_id=user_id,
+                photo=photo_url,
+                caption=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+        else:
+            await bot.send_message(
+                chat_id=user_id,
+                text=card,
+                parse_mode="HTML",
+                reply_markup=announcement_keyboard(SUPPORT_URL),
+            )
+    except Exception as exc:
+        log.debug("send_sticky_announcement to user=%s failed: %s", user_id, exc)
+
+
 # ── Card formatter ────────────────────────────────────────────────────────────
 
 def format_announcement_card(message: str, lang: str = "en") -> str:

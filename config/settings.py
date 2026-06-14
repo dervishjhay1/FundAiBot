@@ -145,6 +145,11 @@ IS_RAILWAY: bool = bool(
 # (Kept as a constant for audit/display purposes — always False outside Railway.)
 ALLOW_POLLING: bool = IS_RAILWAY
 
+# ── Backward-compatibility alias ──────────────────────────────────────────────
+# services/admin_manager.py and any future modules may reference OWNER_USER_ID.
+# It is identical to ADMIN_USER_ID — the permanent super-admin.
+OWNER_USER_ID: int = ADMIN_USER_ID
+
 # ── Validation ────────────────────────────────────────────────────────────────
 def validate_config() -> list[str]:
     """Return a list of missing or invalid critical environment variables."""

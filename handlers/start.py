@@ -158,7 +158,9 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await loop.run_in_executor(None, set_system_prompt, uid, style)
 
     name = user.first_name or "friend"
-    text = WELCOME_BACK.format(name=name)
+    # FIXED: WELCOME_BACK constant was never defined in this file.
+    # Using the language-aware get_string() call instead (same key used in callbacks.py).
+    text = get_string(lang, "welcome_back", name=name)
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu())
 

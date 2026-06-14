@@ -907,10 +907,10 @@ def check_integrations() -> dict:
 
         # Telegram Bot API reachability
         try:
-            from config.settings import BOT_TOKEN
-            if BOT_TOKEN:
+            from config.settings import TELEGRAM_BOT_TOKEN
+            if TELEGRAM_BOT_TOKEN:
                 r = _req.get(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/getMe",
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe",
                     timeout=(4, 8),
                 )
                 if r.status_code == 200 and r.json().get("ok"):
@@ -919,9 +919,9 @@ def check_integrations() -> dict:
                 else:
                     checks.append(_warn("Telegram Bot API",
                                         f"⚠️ HTTP {r.status_code}",
-                                        "Check BOT_TOKEN"))
+                                        "Check TELEGRAM_BOT_TOKEN"))
             else:
-                checks.append(_crit("Telegram Bot API", "❌ BOT_TOKEN not set"))
+                checks.append(_crit("Telegram Bot API", "❌ TELEGRAM_BOT_TOKEN not set"))
         except Exception as exc:
             checks.append(_warn("Telegram Bot API", f"⚠️ {str(exc)[:60]}"))
 

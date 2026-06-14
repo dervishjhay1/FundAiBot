@@ -200,6 +200,7 @@ async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     model    = _USER_MODELS.get(uid, "")
     loop     = asyncio.get_running_loop()
 
+    log.info("[ASK] STAGE 3 — sending thinking indicator: user=%s", uid)
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
     thinking = await message.reply_text("💭 <i>Thinking…</i>", parse_mode="HTML")
 
@@ -207,12 +208,18 @@ async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         {"role": "system", "content": "You are FundzAiBot, a helpful, accurate, and concise AI assistant."},
         {"role": "user",   "content": question},
     ]
+    log.info("[ASK] STAGE 4 — calling AI provider: user=%s model=%s", uid, model or "auto")
     response, provider = await loop.run_in_executor(
         None, lambda: get_ai_response(msgs, model=model)
     )
+    log.info("[ASK] STAGE 5 — AI response: user=%s provider=%s len=%d", uid, provider, len(response))
+    if not response or not response.strip():
+        log.error("[ASK] STAGE 5 — empty AI response: user=%s", uid)
+        response = "⚠️ AI returned an empty response. Please try again."
     await loop.run_in_executor(None, increment_chat, uid)
+    log.info("[ASK] STAGE 6 — sending reply: user=%s", uid)
     await _send_response(message, response, admin, thinking)
-    log.info("/ask user=%s provider=%s len=%d", uid, provider, len(response))
+    log.info("[ASK] DONE: user=%s admin=%s provider=%s len=%d", uid, admin, provider, len(response))
 
 
 # ── /code ─────────────────────────────────────────────────────────────────────
@@ -354,6 +361,7 @@ async def translate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     model = _USER_MODELS.get(uid, "")
     loop  = asyncio.get_running_loop()
 
+    log.info("[TRANSLATE] STAGE 3 — sending indicator: user=%s target=%s", uid, target_lang)
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
     thinking = await message.reply_text(
         f"🌐 <i>Translating to {html.escape(target_lang)}…</i>", parse_mode="HTML"
@@ -363,12 +371,18 @@ async def translate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         {"role": "system", "content": _TRANSLATE_SYSTEM},
         {"role": "user",   "content": f"Translate to {target_lang}:\n\n{text_to_translate[:4000]}"},
     ]
+    log.info("[TRANSLATE] STAGE 4 — calling AI provider: user=%s model=%s", uid, model or "auto")
     response, provider = await loop.run_in_executor(
         None, lambda: get_ai_response(msgs, model=model)
     )
+    log.info("[TRANSLATE] STAGE 5 — AI response: user=%s provider=%s len=%d", uid, provider, len(response))
+    if not response or not response.strip():
+        log.error("[TRANSLATE] STAGE 5 — empty AI response: user=%s", uid)
+        response = "⚠️ Translation failed — AI returned an empty response. Please try again."
     await loop.run_in_executor(None, increment_chat, uid)
+    log.info("[TRANSLATE] STAGE 6 — sending reply: user=%s", uid)
     await _send_response(message, response, admin, thinking)
-    log.info("/translate user=%s target=%s provider=%s", uid, target_lang, provider)
+    log.info("[TRANSLATE] DONE: user=%s target=%s provider=%s len=%d", uid, target_lang, provider, len(response))
 
 
 # ── /analyze (Gemini Vision) ──────────────────────────────────────────────────

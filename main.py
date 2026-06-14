@@ -148,6 +148,7 @@ async def post_init(application: Application) -> None:
 
     # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
     admin_commands = public_commands + [
+        BotCommand("health",            "🩺 Live health dashboard"),
         BotCommand("status",            "📊 Live bot status"),
         BotCommand("testaudit",         "🔬 Enterprise audit center"),
         BotCommand("broadcast",         "📢 Broadcast message to all users"),
@@ -349,6 +350,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("admin_onboarding",   admin_onboarding_handler))
 
     # ── Enterprise audit center (admin only) ──────────────────────────────────
+    app.add_handler(CommandHandler("health",             status_handler))
     app.add_handler(CommandHandler("status",             status_handler))
     app.add_handler(CommandHandler("testaudit",          testaudit_handler))
 

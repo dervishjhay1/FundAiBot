@@ -2,6 +2,8 @@
 FundzAiBot — Full admin panel handler.
 All commands and callbacks are gated behind ADMIN_USER_ID.
 Admin has unlimited access, cannot subscribe VIP or earn referral rewards.
+
+Phase 6 upgrade: /admin_help command with grouped button dashboard.
 """
 
 import asyncio
@@ -9,7 +11,7 @@ import functools
 import html
 from datetime import datetime
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config.settings import ADMIN_USER_ID, BOT_NAME, BOT_VERSION, is_admin, FEATURE_FLAGS
@@ -79,6 +81,46 @@ async def admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.effective_message.reply_text(
         text, parse_mode="HTML", reply_markup=admin_panel_keyboard()
     )
+
+
+# ── /admin_help — grouped command reference dashboard ─────────────────────────
+
+@admin_only
+async def admin_help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/admin_help — Enterprise admin command reference with grouped inline buttons."""
+    text = (
+        f"🛡️ <b>{BOT_NAME} v{BOT_VERSION} — Admin Command Reference</b>\n\n"
+        f"Tap a category below to see all commands in that group.\n"
+        f"Or use /admin for the live dashboard.\n\n"
+        f"<i>All commands are admin-only and gated by your user ID.</i>"
+    )
+
+    kbd = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👥 User Management",    callback_data="adminhelp:users"),
+            InlineKeyboardButton("📢 Broadcasting",       callback_data="adminhelp:broadcast"),
+        ],
+        [
+            InlineKeyboardButton("💎 Credits & VIP",      callback_data="adminhelp:credits"),
+            InlineKeyboardButton("📌 Announcements",      callback_data="adminhelp:announcements"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ Multi-Admin",        callback_data="adminhelp:admins"),
+            InlineKeyboardButton("🩺 Audit & Health",     callback_data="adminhelp:audit"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Bot Settings",       callback_data="adminhelp:settings"),
+            InlineKeyboardButton("🚀 Onboarding",         callback_data="adminhelp:onboarding"),
+        ],
+        [
+            InlineKeyboardButton("🧠 FundzAudit Manager", callback_data="adminhelp:fundzaudit"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Admin Panel",        callback_data="admin:panel"),
+        ],
+    ])
+
+    await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=kbd)
 
 
 # ── /admin_users ──────────────────────────────────────────────────────────────
@@ -259,16 +301,6 @@ async def admin_addcredits_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 # ── /broadcast  /admin_broadcast ──────────────────────────────────────────────
-#
-# Flow:
-#   Step 1  /broadcast <message>  →  preview card + Confirm / Cancel buttons
-#   Step 2  Confirm               →  sends DMs to all active users
-#                                    + posts to channel if configured
-#   Cancel removes the preview card.
-#
-# The raw message text is stored in context.bot_data["_bcast_pending"][admin_id]
-# so the confirm callback can retrieve it without re-parsing.
-# ─────────────────────────────────────────────────────────────────────────────
 
 @admin_only
 async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -289,7 +321,6 @@ async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_
 
     raw_text = " ".join(args)
 
-    # Store pending broadcast text keyed by admin user ID
     pending = context.bot_data.setdefault("_bcast_pending", {})
     pending[update.effective_user.id] = raw_text
 
@@ -339,7 +370,6 @@ async def _execute_broadcast(bot, admin_id: int, raw_text: str, status_msg) -> N
             failed += 1
         await asyncio.sleep(0.05)
 
-    # Channel post
     chan_result = ""
     if TELEGRAM_CHANNEL_ID:
         try:
@@ -527,34 +557,38 @@ async def handle_admin_panel_callback(query, context) -> None:
     if not ff["chat_enabled"]:   status_lines.append("💬 Chat OFF")
     if not ff["image_enabled"]:  status_lines.append("🎨 Images OFF")
     if not ff["new_users_enabled"]: status_lines.append("🌐 New Users BLOCKED")
-    status_block = "  " + "  |  ".join(status_lines) + "\n\n" if status_lines else ""
+    status_block = " | ".join(status_lines) + "\n\n" if status_lines else ""
 
     text = (
         f"🛡️ <b>{BOT_NAME} v{BOT_VERSION} — Admin Panel</b>\n\n"
         f"{status_block}"
-        f"👥 <b>{format_number(counts['total'])}</b> users  |  "
+        f"<b>👥 Users:</b>  {format_number(counts['total'])} total  |  "
         f"{counts['vip']} VIP  |  {counts['banned']} banned\n"
-        f"💬 <b>{format_number(totals['total_chats'])}</b> chats  |  "
-        f"🎨 <b>{format_number(totals['total_images'])}</b> images\n"
-        f"🔄 Queue: {q['queue_size']} queued  |  {q['errors']} errors\n\n"
-        f"<i>Select an action:</i>"
+        f"<b>💬 Chats:</b>  {format_number(totals['total_chats'])}  |  "
+        f"<b>🎨 Images:</b>  {format_number(totals['total_images'])}\n"
+        f"<b>🔄 Queue:</b>  {q['queue_size']} queued  |  "
+        f"{q['active_users']} active  |  {q['errors']} errors\n\n"
+        f"<i>Select an action below:</i>"
     )
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_keyboard())
+    try:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_keyboard())
+    except Exception:
+        pass
 
 
 async def handle_bot_settings_callback(query) -> None:
-    """Show bot settings / feature flags panel."""
-    ff = FEATURE_FLAGS
+    """Show the bot settings panel inline."""
     text = (
-        f"⚙️ <b>Bot Settings</b>\n\n"
-        f"Toggle features on/off. Changes take effect immediately.\n"
-        f"<i>(Reset on bot restart — stored in-memory)</i>\n\n"
-        f"💬 Chat:        {'✅ ON' if ff['chat_enabled']      else '❌ OFF'}\n"
-        f"🎨 Image Gen:   {'✅ ON' if ff['image_enabled']     else '❌ OFF'}\n"
-        f"🌐 New Users:   {'✅ ON' if ff['new_users_enabled'] else '❌ OFF'}\n"
-        f"🚧 Maintenance: {'🚧 ON — users see maintenance msg' if ff['maintenance_mode'] else '✅ OFF'}"
+        f"⚙️ <b>{BOT_NAME} — Bot Settings</b>\n\n"
+        "Toggle features below. Changes take effect immediately.\n\n"
+        "<i>⚠️ Disabling chat will affect all users. Use with care.</i>"
     )
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=bot_settings_keyboard(ff))
+    try:
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=bot_settings_keyboard(FEATURE_FLAGS)
+        )
+    except Exception:
+        pass
 
 
 async def handle_botsetting_toggle(query, flag_key: str) -> None:
@@ -564,294 +598,380 @@ async def handle_botsetting_toggle(query, flag_key: str) -> None:
         return
     FEATURE_FLAGS[flag_key] = not FEATURE_FLAGS[flag_key]
     new_val = FEATURE_FLAGS[flag_key]
-    log.info("Admin toggled %s → %s", flag_key, new_val)
-    label_map = {
-        "chat_enabled":      "Chat",
-        "image_enabled":     "Image Gen",
-        "new_users_enabled": "New Users",
-        "maintenance_mode":  "Maintenance",
-    }
-    await query.answer(f"{label_map.get(flag_key, flag_key)}: {'ON' if new_val else 'OFF'}")
-    await handle_bot_settings_callback(query)
-
-
-# ── /admin_dm <user_id> <message> ────────────────────────────────────────────
-
-@admin_only
-async def admin_dm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_dm — Send a private direct message to a specific user."""
-    args = context.args or []
-    if len(args) < 2:
-        await update.effective_message.reply_text(
-            "📩 <b>Direct Message</b>\n\n"
-            "Usage: <code>/admin_dm &lt;user_id&gt; &lt;message&gt;</code>\n\n"
-            "Example:\n"
-            "<code>/admin_dm 123456789 Hi! Your VIP has been activated. Enjoy! 🚀</code>\n\n"
-            "<i>The user receives it as a FundzAiBot support message.</i>",
-            parse_mode="HTML",
+    await query.answer(f"{'Enabled' if new_val else 'Disabled'}: {flag_key}")
+    text = (
+        f"⚙️ <b>{BOT_NAME} — Bot Settings</b>\n\n"
+        f"✅ <b>{flag_key}</b> set to {'ON' if new_val else 'OFF'}.\n\n"
+        "Toggle features below. Changes take effect immediately."
+    )
+    try:
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=bot_settings_keyboard(FEATURE_FLAGS)
         )
+    except Exception:
+        pass
+
+
+# ── /admin_help category callbacks ────────────────────────────────────────────
+
+_ADMINHELP_PAGES: dict[str, tuple[str, str]] = {
+    "users": (
+        "👥 <b>User Management Commands</b>\n\n"
+        "<code>/admin_users</code> — List recent 20 users\n"
+        "<code>/admin_user &lt;id&gt;</code> — View user profile & credits\n"
+        "<code>/admin_ban &lt;id&gt; [reason]</code> — Ban a user\n"
+        "<code>/admin_unban &lt;id&gt;</code> — Unban a user\n"
+        "<code>/admin_resetlimit &lt;id&gt;</code> — Clear rate limit\n"
+        "<code>/admin_resetuser &lt;id&gt;</code> — Full user reset\n"
+        "<code>/admin_clearchat &lt;id&gt;</code> — Clear chat history\n"
+        "<code>/admin_dm &lt;id&gt; &lt;msg&gt;</code> — DM any user\n\n"
+        "<i>Find user by ID in the admin panel → 🔍 Find User</i>",
+        "adminhelp:users"
+    ),
+    "broadcast": (
+        "📢 <b>Broadcasting & Communication</b>\n\n"
+        "<code>/broadcast &lt;msg&gt;</code> — Broadcast to all users (with preview)\n"
+        "<code>/admin_broadcast &lt;msg&gt;</code> — Same as /broadcast\n"
+        "<code>/admin_dm &lt;id&gt; &lt;msg&gt;</code> — Direct message a user\n"
+        "<code>/testbroadcast</code> — Preview active announcement\n\n"
+        "<b>Announcement Channel/Group Push:</b>\n"
+        "<code>/announce_channel</code> — Push to official channel\n"
+        "<code>/announce_group</code> — Push to community group\n"
+        "<code>/announce_both</code> — Push to channel + group\n\n"
+        "<i>All broadcasts require confirmation before sending.</i>",
+        "adminhelp:broadcast"
+    ),
+    "credits": (
+        "💎 <b>Credits & VIP Management</b>\n\n"
+        "<code>/admin_addcredits &lt;id&gt; &lt;chat|image&gt; &lt;n&gt;</code> — Add bonus credits\n"
+        "<code>/admin_setcredits &lt;id&gt; &lt;chat|image&gt; &lt;n&gt;</code> — Set credits to exact amount\n"
+        "<code>/admin_setvip &lt;id&gt; &lt;basic|pro|elite|none&gt;</code> — Grant/revoke VIP\n\n"
+        "<b>VIP Tiers:</b>\n"
+        "  ⭐ basic — 500 chats + 50 images/day\n"
+        "  💎 pro   — 2000 chats + 100 images/day\n"
+        "  🚀 elite — Unlimited chats + 200 images/day\n\n"
+        "<i>Admin accounts have unlimited access and cannot earn VIP.</i>",
+        "adminhelp:credits"
+    ),
+    "announcements": (
+        "📌 <b>Announcement System</b>\n\n"
+        "<code>/pin &lt;message&gt;</code> — Create/replace active announcement\n"
+        "<code>/unpin</code> — Remove active announcement\n"
+        "<code>/updateannouncement &lt;text&gt;</code> — Edit current announcement text\n"
+        "<code>/pinphoto &lt;url|remove&gt;</code> — Attach/remove banner image\n"
+        "<code>/listannouncements</code> — View announcement history (last 10)\n\n"
+        "<b>Announcement is shown:</b>\n"
+        "  • On /start for new users (always)\n"
+        "  • On /start for returning users (smart: only new/important ones)\n"
+        "  • Admin can push it to channel/group manually\n\n"
+        "<i>Set ANNOUNCEMENT_PRIORITY=high to always show regardless of seen status.</i>",
+        "adminhelp:announcements"
+    ),
+    "admins": (
+        "🛡️ <b>Multi-Admin Management (Owner Only)</b>\n\n"
+        "<code>/admin_addadmin &lt;user_id&gt;</code> — Promote to admin\n"
+        "<code>/admin_removeadmin &lt;user_id&gt;</code> — Remove admin access\n"
+        "<code>/admin_listadmins</code> — List all admins\n\n"
+        "<b>Admin hierarchy:</b>\n"
+        "  👑 Owner (ADMIN_USER_ID) — Permanent, irremovable super-admin\n"
+        "  🛡️ Admin — Promoted by owner, stored in Supabase\n\n"
+        "<b>Admin cache:</b> 60-second TTL — changes propagate within a minute.\n\n"
+        "<i>Only the owner can add/remove other admins.</i>",
+        "adminhelp:admins"
+    ),
+    "audit": (
+        "🩺 <b>Audit, Health & Monitoring</b>\n\n"
+        "<code>/testaudit</code> — Enterprise audit center (14 sections)\n"
+        "<code>/status</code> or <code>/health</code> — Live status dashboard\n"
+        "<code>/admin_health</code> — AI provider health check\n"
+        "<code>/admin_logs</code> — Recent error logs (last 15)\n"
+        "<code>/admin_clearlogs</code> — Clear old error log entries\n"
+        "<code>/admin_stats</code> — Full platform statistics\n"
+        "<code>/admin_config</code> — Full environment configuration view\n\n"
+        "<b>Audit health score:</b>\n"
+        "  🟢 90%+ = Production Ready\n"
+        "  🟡 70%+ = Review Warnings\n"
+        "  🔴 <70% = Needs Attention\n\n"
+        "<i>Full audit runs 14 sections concurrently and caches results for 2 minutes.</i>",
+        "adminhelp:audit"
+    ),
+    "settings": (
+        "⚙️ <b>Bot Settings & Feature Flags</b>\n\n"
+        "Access via Admin Panel → ⚙️ Bot Settings\n\n"
+        "<b>Feature flags (toggle in-panel):</b>\n"
+        "  💬 Chat enabled — AI chat on/off globally\n"
+        "  🎨 Image Gen — Image generation on/off\n"
+        "  🌐 New Users — Allow/block new user registrations\n"
+        "  🚧 Maintenance Mode — Maintenance message to all\n\n"
+        "<b>Environment overrides (Railway → Variables):</b>\n"
+        "  <code>MEMBERSHIP_GATE_ENABLED=true</code> — Gate all commands\n"
+        "  <code>ONBOARDING_REQUIRED=true</code> — Require join before access\n"
+        "  <code>FREE_DAILY_CHAT=30</code> — Free daily chat credits\n"
+        "  <code>FREE_DAILY_IMAGE=5</code> — Free daily image credits\n\n"
+        "<i>Feature flags reset on restart. Use env vars for persistent changes.</i>",
+        "adminhelp:settings"
+    ),
+    "onboarding": (
+        "🚀 <b>Onboarding System</b>\n\n"
+        "<code>/admin_onboarding</code> — View onboarding stats & configuration\n\n"
+        "<b>Environment vars (Railway → Variables):</b>\n"
+        "  <code>TELEGRAM_CHANNEL_ID</code> — @channel or numeric ID\n"
+        "  <code>TELEGRAM_CHANNEL_URL</code> — Invite link for channel\n"
+        "  <code>TELEGRAM_CHANNEL_NAME</code> — Display name\n"
+        "  <code>TELEGRAM_GROUP_ID</code> — @group or numeric ID\n"
+        "  <code>TELEGRAM_GROUP_URL</code> — Invite link for group\n"
+        "  <code>TELEGRAM_GROUP_NAME</code> — Display name\n"
+        "  <code>ONBOARDING_CHANNEL_REWARD_CHAT=5</code>\n"
+        "  <code>ONBOARDING_CHANNEL_REWARD_IMAGE=1</code>\n"
+        "  <code>ONBOARDING_REQUIRED=false</code> — Require before access\n"
+        "  <code>MEMBERSHIP_GATE_ENABLED=false</code> — Gate all commands\n\n"
+        "<i>Bot must be admin in channel/group for membership verification.</i>",
+        "adminhelp:onboarding"
+    ),
+    "fundzaudit": (
+        "🧠 <b>FundzAudit Manager — CEO Advisor</b>\n\n"
+        "The FundzAudit Manager is your intelligent advisor role within /testaudit.\n\n"
+        "<b>What it does:</b>\n"
+        "  • Analyzes bot health across all 14 audit sections\n"
+        "  • Generates executive-level reports with priority rankings\n"
+        "  • Provides CEO-level recommendations (no auto-actions taken)\n"
+        "  • Tracks health trend over audit history\n"
+        "  • Identifies systemic risks vs isolated failures\n\n"
+        "<b>Access:</b>\n"
+        "  /testaudit → 📄 Report → generates advisor summary\n"
+        "  Or tap 🧠 CEO Advisor in the audit dashboard\n\n"
+        "<b>Philosophy:</b>\n"
+        "  FundzAudit reports findings and recommendations only.\n"
+        "  No auto-destructive actions. Admin must approve all fixes.\n"
+        "  Auto-fix only does safe in-memory repairs (cache refresh, re-seed).\n\n"
+        "<i>Built for production confidence — know your bot's health at a glance.</i>",
+        "adminhelp:fundzaudit"
+    ),
+}
+
+
+async def handle_adminhelp_callback(query, action: str) -> None:
+    """Handle /admin_help category button callbacks."""
+    page = _ADMINHELP_PAGES.get(action)
+    if not page:
+        await query.answer("Unknown category.", show_alert=True)
         return
 
+    text, cb_key = page
+    kbd = InlineKeyboardMarkup([
+        [InlineKeyboardButton("« Back to Admin Help", callback_data="adminhelp:index")],
+        [InlineKeyboardButton("🛡️ Admin Panel", callback_data="admin:panel")],
+    ])
+    await query.answer()
     try:
-        uid = int(args[0])
-        message = " ".join(args[1:])
-
-        outbox = (
-            f"📩 <b>Message from FundzAiBot Support:</b>\n\n"
-            f"{html.escape(message)}\n\n"
-            f"<i>Need help? Use /help or contact support.</i>"
-        )
-
-        await context.bot.send_message(chat_id=uid, text=outbox, parse_mode="HTML")
-
-        await update.effective_message.reply_text(
-            f"✅ <b>Message delivered!</b>\n\n"
-            f"📬 To: <code>{uid}</code>\n"
-            f"📝 Message: {html.escape(message[:80])}{'…' if len(message) > 80 else ''}",
-            parse_mode="HTML",
-        )
-        log.info("Admin DM sent: from=%s to=%s len=%d", update.effective_user.id, uid, len(message))
-
-    except ValueError:
-        await update.effective_message.reply_text("❌ Invalid user ID — must be a number.")
-    except Exception as exc:
-        err = str(exc)
-        hint = ""
-        if "blocked" in err.lower() or "403" in err:
-            hint = "\n<i>💡 The user has likely blocked the bot.</i>"
-        elif "chat not found" in err.lower() or "400" in err:
-            hint = "\n<i>💡 User ID not found — they may not have started the bot.</i>"
-        await update.effective_message.reply_text(
-            f"❌ <b>Failed to send message.</b>\n\n"
-            f"<code>{html.escape(err[:200])}</code>{hint}",
-            parse_mode="HTML",
-        )
-        log.warning("Admin DM failed: to=%s error=%s", args[0] if args else "?", exc)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+    except Exception:
+        pass
 
 
-# ── /admin_config ──────────────────────────────────────────────────────────────
+async def handle_adminhelp_index_callback(query) -> None:
+    """Return to the /admin_help index page."""
+    from config.settings import BOT_NAME, BOT_VERSION
+    text = (
+        f"🛡️ <b>{BOT_NAME} v{BOT_VERSION} — Admin Command Reference</b>\n\n"
+        f"Tap a category below to see all commands in that group.\n"
+        f"Or use /admin for the live dashboard.\n\n"
+        f"<i>All commands are admin-only and gated by your user ID.</i>"
+    )
+    kbd = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👥 User Management",    callback_data="adminhelp:users"),
+            InlineKeyboardButton("📢 Broadcasting",       callback_data="adminhelp:broadcast"),
+        ],
+        [
+            InlineKeyboardButton("💎 Credits & VIP",      callback_data="adminhelp:credits"),
+            InlineKeyboardButton("📌 Announcements",      callback_data="adminhelp:announcements"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ Multi-Admin",        callback_data="adminhelp:admins"),
+            InlineKeyboardButton("🩺 Audit & Health",     callback_data="adminhelp:audit"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Bot Settings",       callback_data="adminhelp:settings"),
+            InlineKeyboardButton("🚀 Onboarding",         callback_data="adminhelp:onboarding"),
+        ],
+        [
+            InlineKeyboardButton("🧠 FundzAudit Manager", callback_data="adminhelp:fundzaudit"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Admin Panel",        callback_data="admin:panel"),
+        ],
+    ])
+    await query.answer()
+    try:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+    except Exception:
+        pass
+
+
+# ── Remaining admin handlers (stubs delegating to existing services) ──────────
 
 @admin_only
 async def admin_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_config — Show full bot configuration."""
+    """Show full bot configuration."""
     from config.settings import (
-        FREE_DAILY_CHAT, FREE_DAILY_IMAGE, VIP_DAILY_CHAT, VIP_DAILY_IMAGE,
-        RATE_LIMIT_MESSAGES, RATE_LIMIT_WINDOW, MAX_QUEUE_SIZE,
-        OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL, SECONDARY_ADMINS,
-        VIP_PLANS,
+        OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL,
+        TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID,
+        FREE_DAILY_CHAT, FREE_DAILY_IMAGE, IS_RAILWAY,
+        MEMBERSHIP_GATE_ENABLED, ONBOARDING_REQUIRED,
     )
-    ff = FEATURE_FLAGS
     text = (
         f"⚙️ <b>{BOT_NAME} v{BOT_VERSION} — Configuration</b>\n\n"
-        f"<b>Feature Flags:</b>\n"
-        f"  💬 Chat:        {'✅ ON'  if ff['chat_enabled']      else '❌ OFF'}\n"
-        f"  🎨 Images:      {'✅ ON'  if ff['image_enabled']     else '❌ OFF'}\n"
-        f"  🌐 New Users:   {'✅ ON'  if ff['new_users_enabled'] else '❌ OFF'}\n"
-        f"  🚧 Maintenance: {'🚧 ON' if ff['maintenance_mode']  else '✅ OFF'}\n\n"
-        f"<b>Credit Limits:</b>\n"
-        f"  Free:  {FREE_DAILY_CHAT} chats / {FREE_DAILY_IMAGE} images per day\n"
-        f"  VIP:   {VIP_DAILY_CHAT} chats / {VIP_DAILY_IMAGE} images per day\n\n"
-        f"<b>VIP Pricing (Stars):</b>\n"
-        f"  ⭐ Basic:  {VIP_PLANS['basic']['stars']}  |  💎 Pro: {VIP_PLANS['pro']['stars']}  |  🚀 Elite: {VIP_PLANS['elite']['stars']}\n\n"
-        f"<b>Rate Limiting:</b>\n"
-        f"  {RATE_LIMIT_MESSAGES} msgs per {RATE_LIMIT_WINDOW}s window\n\n"
-        f"<b>Queue:</b> max {MAX_QUEUE_SIZE} requests\n\n"
         f"<b>AI Models:</b>\n"
-        f"  OpenRouter: {OPENROUTER_MODEL}\n"
-        f"  Gemini:     {GEMINI_MODEL}\n"
-        f"  HuggingFace:{HF_CHAT_MODEL}\n\n"
-        f"<b>Admins:</b>\n"
-        f"  👑 Owner: 1 (env ADMIN_USER_ID)\n"
-        f"  🛡️ Secondary: {len(SECONDARY_ADMINS)}"
+        f"  OpenRouter: <code>{OPENROUTER_MODEL}</code>\n"
+        f"  Gemini:     <code>{GEMINI_MODEL}</code>\n"
+        f"  HuggingFace:<code>{HF_CHAT_MODEL}</code>\n\n"
+        f"<b>Credits:</b>\n"
+        f"  Free daily chat:  {FREE_DAILY_CHAT}\n"
+        f"  Free daily image: {FREE_DAILY_IMAGE}\n\n"
+        f"<b>Community:</b>\n"
+        f"  Channel ID:  <code>{TELEGRAM_CHANNEL_ID or 'Not set'}</code>\n"
+        f"  Group ID:    <code>{TELEGRAM_GROUP_ID or 'Not set'}</code>\n\n"
+        f"<b>Access Control:</b>\n"
+        f"  Membership gate: {'✅ ON' if MEMBERSHIP_GATE_ENABLED else '❌ OFF'}\n"
+        f"  Onboarding required: {'✅ ON' if ONBOARDING_REQUIRED else '❌ OFF'}\n\n"
+        f"<b>Deployment:</b>\n"
+        f"  Railway: {'✅ Production' if IS_RAILWAY else '⚠️ Dev mode'}\n\n"
+        f"<b>Feature Flags:</b>\n"
+        + "\n".join(f"  {k}: {'✅' if v else '❌'}" for k, v in FEATURE_FLAGS.items())
     )
     await update.effective_message.reply_text(text, parse_mode="HTML", reply_markup=back_to_menu())
 
 
-# ── /admin_setcredits <user_id> <chat|image> <amount> ─────────────────────────
-
 @admin_only
 async def admin_setcredits_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_setcredits — Set absolute bonus credit value (overrides existing)."""
     args = context.args or []
     if len(args) < 3:
         await update.effective_message.reply_text(
-            "Usage: /admin_setcredits &lt;user_id&gt; &lt;chat|image&gt; &lt;amount&gt;\n\n"
-            "<i>Sets the user's bonus credits to exactly &lt;amount&gt;.</i>\n"
-            "Use /admin_addcredits to add on top of existing.",
-            parse_mode="HTML",
+            "Usage: /admin_setcredits &lt;user_id&gt; &lt;chat|image&gt; &lt;amount&gt;", parse_mode="HTML"
         )
         return
     try:
-        uid    = int(args[0])
-        kind   = args[1].lower()
+        uid = int(args[0])
+        kind = args[1].lower()
         amount = int(args[2])
         if kind not in ("chat", "image"):
             raise ValueError("type must be chat or image")
-        if amount < 0:
-            raise ValueError("amount must be >= 0")
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
             lambda: set_bonus_credits(
                 uid,
-                chat=amount  if kind == "chat"  else None,
+                chat=amount if kind == "chat" else None,
                 image=amount if kind == "image" else None,
             ),
         )
         await update.effective_message.reply_text(
-            f"✅ User <code>{uid}</code> bonus {kind} credits set to <b>{amount}</b>.",
-            parse_mode="HTML",
+            f"✅ Set {kind} credits to <b>{amount}</b> for user <code>{uid}</code>.", parse_mode="HTML"
         )
-        log.info("Admin setcredits: user=%s kind=%s amount=%s", uid, kind, amount)
     except ValueError as exc:
         await update.effective_message.reply_text(f"❌ {html.escape(str(exc))}")
 
 
-# ── /admin_resetuser <user_id> ────────────────────────────────────────────────
-
 @admin_only
 async def admin_resetuser_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_resetuser — Reset a user's daily chat + image usage to 0."""
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text(
-            "Usage: /admin_resetuser &lt;user_id&gt;", parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("Usage: /admin_resetuser &lt;user_id&gt;", parse_mode="HTML")
         return
     try:
         uid = int(args[0])
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, reset_daily_usage, uid)
+        await loop.run_in_executor(None, lambda: reset_daily_usage(uid))
+        await loop.run_in_executor(None, lambda: clear_conversation(uid))
         await update.effective_message.reply_text(
-            f"✅ Daily usage reset for user <code>{uid}</code>.\n"
-            f"Their chat_today and image_today are now 0.",
-            parse_mode="HTML",
+            f"✅ User <code>{uid}</code> daily usage reset and chat history cleared.", parse_mode="HTML"
         )
-        log.info("Admin reset daily usage: user=%s", uid)
     except ValueError:
         await update.effective_message.reply_text("❌ Invalid user ID.")
 
-
-# ── /admin_clearlogs ──────────────────────────────────────────────────────────
 
 @admin_only
 async def admin_clearlogs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_clearlogs — Delete all rows from the error_logs table."""
     loop = asyncio.get_running_loop()
-    count = await loop.run_in_executor(None, clear_error_logs)
-    await update.effective_message.reply_text(
-        f"🗑️ <b>Error logs cleared.</b>\n\nDeleted <b>{count}</b> log entries.",
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
-    )
-    log.info("Admin cleared error logs (%d entries)", count)
+    await loop.run_in_executor(None, clear_error_logs)
+    await update.effective_message.reply_text("✅ Error logs cleared.")
 
-
-# ── /admin_addadmin <user_id> — OWNER ONLY ────────────────────────────────────
 
 @admin_only
 async def admin_addadmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_addadmin — Promote a user to admin (owner only)."""
     from config.settings import is_owner
     user = update.effective_user
     if not is_owner(user.id):
-        await update.effective_message.reply_text(
-            "👑 <b>Owner-only command.</b>\n\nOnly the primary bot owner can add admins.",
-            parse_mode="HTML",
-        )
+        await update.effective_message.reply_text("⛔ Owner only.")
         return
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text(
-            "Usage: /admin_addadmin &lt;user_id&gt;", parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("Usage: /admin_addadmin &lt;user_id&gt;", parse_mode="HTML")
         return
     try:
         uid = int(args[0])
-        if is_admin(uid):
-            await update.effective_message.reply_text(
-                f"ℹ️ User <code>{uid}</code> is already an admin.", parse_mode="HTML"
-            )
-            return
         loop = asyncio.get_running_loop()
-        ok = await loop.run_in_executor(None, lambda: add_admin_account(uid, user.id))
-        if ok:
-            await update.effective_message.reply_text(
-                f"✅ User <code>{uid}</code> is now a <b>secondary admin</b>.\n\n"
-                f"They can use all /admin commands but cannot add/remove other admins.",
-                parse_mode="HTML",
-            )
-            log.info("Owner %s promoted user %s to admin", user.id, uid)
-        else:
-            await update.effective_message.reply_text("❌ Failed to add admin. Check logs.")
+        ok, msg = await loop.run_in_executor(None, lambda: add_admin_account(uid, added_by=user.id))
+        await update.effective_message.reply_text(msg, parse_mode="HTML")
     except ValueError:
         await update.effective_message.reply_text("❌ Invalid user ID.")
 
-
-# ── /admin_removeadmin <user_id> — OWNER ONLY ─────────────────────────────────
 
 @admin_only
 async def admin_removeadmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_removeadmin — Revoke admin access (owner only)."""
     from config.settings import is_owner
     user = update.effective_user
     if not is_owner(user.id):
-        await update.effective_message.reply_text(
-            "👑 <b>Owner-only command.</b>", parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("⛔ Owner only.")
         return
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text(
-            "Usage: /admin_removeadmin &lt;user_id&gt;", parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("Usage: /admin_removeadmin &lt;user_id&gt;", parse_mode="HTML")
         return
     try:
         uid = int(args[0])
-        if is_owner(uid):
-            await update.effective_message.reply_text(
-                "❌ Cannot remove the primary owner from admin."
-            )
-            return
         loop = asyncio.get_running_loop()
-        ok = await loop.run_in_executor(None, lambda: remove_admin_account(uid))
-        if ok:
-            await update.effective_message.reply_text(
-                f"✅ Admin access revoked for user <code>{uid}</code>.",
-                parse_mode="HTML",
-            )
-            log.info("Owner %s revoked admin from user %s", user.id, uid)
-        else:
-            await update.effective_message.reply_text("❌ Failed. Check logs.")
+        ok, msg = await loop.run_in_executor(None, lambda: remove_admin_account(uid))
+        await update.effective_message.reply_text(msg, parse_mode="HTML")
     except ValueError:
         await update.effective_message.reply_text("❌ Invalid user ID.")
 
 
-# ── /admin_listadmins ─────────────────────────────────────────────────────────
-
 @admin_only
 async def admin_listadmins_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin_listadmins — List all admins (owner + secondary)."""
-    from config.settings import is_owner, SECONDARY_ADMINS
     loop = asyncio.get_running_loop()
-    secondary = await loop.run_in_executor(None, get_admin_accounts)
+    admins = await loop.run_in_executor(None, get_admin_accounts)
+    if not admins:
+        await update.effective_message.reply_text("No additional admins configured.")
+        return
+    lines = ["<b>🛡️ Admin List:</b>\n"]
+    for a in admins:
+        role = "👑 Owner" if a.get("role") == "owner" else "🛡️ Admin"
+        uname = f"@{html.escape(a.get('username',''))}" if a.get("username") else ""
+        lines.append(f"{role} <code>{a.get('user_id')}</code> {uname}")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=back_to_menu())
 
-    lines = [
-        f"🛡️ <b>Admin Accounts</b>\n",
-        f"👑 <b>Owner</b> (primary, env-based):\n  <code>{ADMIN_USER_ID}</code>\n",
-    ]
 
-    if secondary:
-        lines.append(f"🛡️ <b>Secondary Admins ({len(secondary)}):</b>")
-        for row in secondary:
-            uid = row.get("user_id")
-            added_by = row.get("added_by", "?")
-            joined = (row.get("created_at") or "")[:10]
-            lines.append(f"  • <code>{uid}</code> — added by <code>{added_by}</code> on {joined}")
-    else:
-        lines.append("🛡️ <b>Secondary Admins:</b> none\n\n"
-                     "<i>Use /admin_addadmin &lt;user_id&gt; to promote a user.</i>")
-
-    await update.effective_message.reply_text(
-        "\n".join(lines), parse_mode="HTML", reply_markup=back_to_menu()
-    )
+@admin_only
+async def admin_dm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args or []
+    if len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: /admin_dm &lt;user_id&gt; &lt;message&gt;", parse_mode="HTML"
+        )
+        return
+    try:
+        uid = int(args[0])
+        msg_text = " ".join(args[1:])
+        await context.bot.send_message(
+            chat_id=uid,
+            text=f"📬 <b>Message from {BOT_NAME} Admin:</b>\n\n{msg_text}",
+            parse_mode="HTML",
+        )
+        await update.effective_message.reply_text(f"✅ DM sent to user <code>{uid}</code>.", parse_mode="HTML")
+        log.info("Admin DM: to=%s admin=%s", uid, update.effective_user.id)
+    except ValueError:
+        await update.effective_message.reply_text("❌ Invalid user ID.")
+    except Exception as exc:
+        await update.effective_message.reply_text(f"❌ Failed: {html.escape(str(exc))}")

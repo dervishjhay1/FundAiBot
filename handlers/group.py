@@ -6,8 +6,11 @@ Provides:
   • /ai <question> command inside the group
   • @mention reply when bot is @tagged in group
   • Anti-spam filter with warning + auto-mute system
-
-All handlers only activate in group/supergroup chats.
+  • Group/channel behaviour rules (Phase 3-4):
+    - Bot does NOT show menus or process regular commands in groups
+    - Only /ai and @mention responses are active in groups
+    - Channel messages: bot ignores all commands from non-admins
+    - Bot never sends inline keyboards in groups for command responses
 """
 
 import asyncio
@@ -53,6 +56,43 @@ def _add_warning(user_id: int) -> int:
     ]
     _WARN_STORE[user_id].append(now)
     return len(_WARN_STORE[user_id])
+
+
+# ── Channel command guard ──────────────────────────────────────────────────────
+
+async def _is_channel_admin(bot, chat_id, user_id: int) -> bool:
+    """Check if a user is an admin in a channel/group."""
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status in ("administrator", "creator")
+    except Exception:
+        return False
+
+
+async def channel_command_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Returns True (block) if this is a channel/group message from a non-admin.
+    Bot only responds to admin commands in channels.
+    Always returns False in private chats (no blocking).
+    """
+    chat = update.effective_chat
+    if not chat:
+        return False
+    if chat.type == "private":
+        return False
+    user = update.effective_user
+    if not user:
+        return True  # block anonymous
+    if is_admin(user.id):
+        return False
+    # Check if Telegram group admin
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status in ("administrator", "creator"):
+            return False
+    except Exception:
+        pass
+    return True  # block regular users from commands in groups/channels
 
 
 # ── New member welcome ─────────────────────────────────────────────────────────
@@ -108,7 +148,7 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ── /ai command in groups ─────────────────────────────────────────────────────
 
 async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/ai <question> — AI answer directly inside the group."""
+    """/ai <question> — AI answer directly inside the group (no menus sent back)."""
     if not FEATURE_FLAGS.get("chat_enabled", True):
         await update.message.reply_text("🚧 AI chat is temporarily unavailable.")
         return
@@ -136,7 +176,6 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             None,
             lambda: get_or_create_user(user.id, first_name=user.first_name or ""),
         )
-        style = (db_user or {}).get("ai_style", "default")
 
         response, provider = await loop.run_in_executor(
             None,
@@ -150,6 +189,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if len(reply) > 4000:
             reply = reply[:3900] + "\n\n<i>…(truncated)</i>"
 
+        # No inline keyboards in group responses — clean output only
         await thinking.edit_text(reply, parse_mode="HTML")
         log.info("Group /ai: user=%s chat=%s provider=%s", user.id,
                  update.effective_chat.id, provider)
@@ -161,7 +201,7 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ── @mention reply ────────────────────────────────────────────────────────────
 
 async def mention_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reply when the bot is @mentioned in a group message."""
+    """Reply when the bot is @mentioned in a group message. No menus returned."""
     message = update.message
     if not message or not message.text:
         return
@@ -208,12 +248,46 @@ async def mention_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         reply = f"🤖 <b>{name}:</b>\n\n{response}"
         if len(reply) > 4000:
             reply = reply[:3900] + "\n\n<i>…(truncated)</i>"
+        # No inline keyboards in group responses
         await thinking.edit_text(reply, parse_mode="HTML")
         log.info("Group mention: user=%s chat=%s provider=%s",
                  user.id, update.effective_chat.id, provider)
     except Exception as exc:
         log.error("Mention handler error: %s", exc)
         await thinking.edit_text("⚠️ AI is unavailable right now.")
+
+
+# ── Group command blocker ─────────────────────────────────────────────────────
+
+async def group_command_blocker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Silently ignore regular bot commands sent in groups by non-admins.
+    The bot only handles /ai and @mentions in groups.
+    Regular commands (/start, /help, etc.) are ignored without reply
+    to keep the group feed clean.
+    """
+    user = update.effective_user
+    if not user:
+        return
+    # Admins can still run commands in groups
+    if is_admin(user.id):
+        return
+    # Check Telegram group admin status
+    chat = update.effective_chat
+    if chat:
+        try:
+            member = await context.bot.get_chat_member(chat.id, user.id)
+            if member.status in ("administrator", "creator"):
+                return
+        except Exception:
+            pass
+    # Silently ignore — no reply to keep group clean
+    log.debug(
+        "Group command blocked for non-admin user=%s cmd=%s chat=%s",
+        user.id,
+        (update.message.text or "")[:30] if update.message else "?",
+        chat.id if chat else "?",
+    )
 
 
 # ── Anti-spam filter ──────────────────────────────────────────────────────────

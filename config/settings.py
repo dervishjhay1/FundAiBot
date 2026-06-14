@@ -46,7 +46,7 @@ FLASK_HOST: str = "0.0.0.0"
 
 # ── Bot identity ──────────────────────────────────────────────────────────────
 BOT_NAME: str = "FundzAiBot"
-BOT_VERSION: str = "2.5.0"
+BOT_VERSION: str = "4.0.0"
 BOT_TAGLINE: str = "Your Intelligent AI Assistant"
 
 # ── AI defaults ───────────────────────────────────────────────────────────────
@@ -114,6 +114,11 @@ ONBOARDING_CHANNEL_REWARD_IMAGE: int = int(os.getenv("ONBOARDING_CHANNEL_REWARD_
 ONBOARDING_GROUP_REWARD_CHAT: int    = int(os.getenv("ONBOARDING_GROUP_REWARD_CHAT", "5"))
 ONBOARDING_GROUP_REWARD_IMAGE: int   = int(os.getenv("ONBOARDING_GROUP_REWARD_IMAGE", "1"))
 ONBOARDING_REQUIRED: bool = os.getenv("ONBOARDING_REQUIRED", "false").lower() == "true"
+
+# ── Membership gate ───────────────────────────────────────────────────────────
+# When True, ALL premium commands (not just /start) require channel+group membership.
+# Set via MEMBERSHIP_GATE_ENABLED=true in Railway env vars.
+MEMBERSHIP_GATE_ENABLED: bool = os.getenv("MEMBERSHIP_GATE_ENABLED", "false").lower() == "true"
 
 # ── Web App / Mini-App ────────────────────────────────────────────────────────
 # Public HTTPS base URL where Flask is accessible (e.g. Railway service URL).

@@ -1498,6 +1498,9 @@ def _render_dashboard(audit: dict) -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton("📋 Error Logs",     callback_data="audit:section:error_logs"),
         InlineKeyboardButton("📜 History",         callback_data="audit:history"),
     ])
+    rows.append([
+        InlineKeyboardButton("🧠 CEO Advisor",    callback_data="audit:ceo_advisor"),
+    ])
     action_row = [InlineKeyboardButton("🔄 Full Retest", callback_data="audit:retest")]
     if total_f > 0 and not partial:
         action_row.append(
@@ -1559,6 +1562,139 @@ def _render_section(key: str, section: dict) -> tuple[str, InlineKeyboardMarkup]
         InlineKeyboardButton("« Admin Panel", callback_data="admin:panel"),
     ])
     return text, InlineKeyboardMarkup(kbd_rows)
+
+
+def _render_ceo_advisor(audit: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """
+    FundzAudit CEO Advisor — executive-level health analysis and priority recommendations.
+
+    Philosophy:
+      • No auto-destructive actions — advisor RECOMMENDS, admin approves.
+      • Auto-fix only performs safe in-memory repairs (cache refresh, re-seed).
+      • Priority ranking: Critical > High > Medium > Low.
+      • Systemic risk detection: multiple related failures are flagged as a pattern.
+      • Trend summary from history (if available).
+    """
+    score   = audit["health_score"]
+    total_p = audit["total_pass"]
+    total_w = audit["total_warn"]
+    total_f = audit["total_fail"]
+    sections = audit["sections"]
+    ts = datetime.fromtimestamp(audit["timestamp"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # ── Determine executive health tier ──────────────────────────────────────
+    if score >= 95:
+        tier = "🏆 EXCELLENT"
+        tier_note = "System operating at peak. No action required."
+    elif score >= 85:
+        tier = "✅ HEALTHY"
+        tier_note = "System stable. Address warnings during normal maintenance cycle."
+    elif score >= 70:
+        tier = "⚠️ ATTENTION NEEDED"
+        tier_note = "Non-critical issues present. Schedule fixes within 24–48 hours."
+    elif score >= 50:
+        tier = "🔴 AT RISK"
+        tier_note = "Significant issues detected. Prioritize fixes immediately."
+    else:
+        tier = "🚨 CRITICAL"
+        tier_note = "System health severely degraded. Emergency intervention required."
+
+    # ── Identify critical and warning sections ────────────────────────────────
+    critical_sections = [k for k, s in sections.items() if s.get("status") == "fail"]
+    warning_sections  = [k for k, s in sections.items() if s.get("status") == "warn"]
+
+    # ── Detect systemic risk patterns ─────────────────────────────────────────
+    systemic_risk = []
+    infra_fail = set(critical_sections) & {"bot_core", "database", "railway"}
+    if len(infra_fail) >= 2:
+        systemic_risk.append(f"🔴 Infrastructure cascade risk: {', '.join(infra_fail)}")
+    ai_fail = set(critical_sections) & {"ai_providers"}
+    community_fail = set(critical_sections) & {"channel", "community"}
+    if ai_fail:
+        systemic_risk.append("🔴 All AI chat/image responses will fail until provider is fixed")
+    if len(community_fail) >= 2:
+        systemic_risk.append("⚠️ Community presence impacted: channel + group both failing")
+
+    # ── Build priority-ranked recommendation list ─────────────────────────────
+    priorities = []
+
+    for key in critical_sections:
+        icon, label = SECTION_META[key]
+        # Find first failing check for context
+        failing = [c for c in sections[key].get("checks", []) if c["status"] == "fail"]
+        fix_hint = failing[0].get("fix", "Check section detail") if failing else "Review section"
+        priorities.append(("🔴 CRITICAL", f"{icon} {label}", fix_hint))
+
+    for key in warning_sections:
+        icon, label = SECTION_META[key]
+        warn_checks = [c for c in sections[key].get("checks", []) if c["status"] == "warn"]
+        fix_hint = warn_checks[0].get("fix", "Review warnings") if warn_checks else "Review section"
+        priorities.append(("⚠️ HIGH" if key in ("bot_core", "ai_providers", "database") else "📌 MEDIUM",
+                          f"{icon} {label}", fix_hint))
+
+    # ── Build the advisory text ───────────────────────────────────────────────
+    lines = [
+        "🧠 <b>FundzAudit Manager — CEO Advisor</b>",
+        f"<i>Generated: {ts}</i>",
+        "",
+        f"<b>Overall Assessment:</b> {tier}",
+        f"<b>Health Score:</b> {score}%  ({total_p} pass · {total_w} warn · {total_f} critical)",
+        "",
+        f"<i>{tier_note}</i>",
+    ]
+
+    # Systemic risk block
+    if systemic_risk:
+        lines.append("")
+        lines.append("<b>⚠️ Systemic Risk Patterns Detected:</b>")
+        for risk in systemic_risk:
+            lines.append(f"  {risk}")
+
+    # Priority action list
+    if priorities:
+        lines.append("")
+        lines.append("<b>Priority Action List:</b>")
+        for pri_label, section_name, fix in priorities[:8]:  # cap at 8 items
+            lines.append(f"  {pri_label}: {section_name}")
+            lines.append(f"    → {fix}")
+    else:
+        lines.append("")
+        lines.append("✅ <b>No actions required at this time.</b>")
+        lines.append("All systems passing. Continue monitoring via /testaudit.")
+
+    # CEO-level operational notes
+    lines.append("")
+    lines.append("<b>Operational Notes:</b>")
+    lines.append("• This report is advisory only — no automated changes are made.")
+    lines.append("• Auto-fix performs only safe in-memory repairs (cache, re-seed).")
+    lines.append("• Destructive actions (DB schema, API key rotation) require manual approval.")
+    lines.append("• Re-run audit after fixes to confirm resolution.")
+
+    if score < 70:
+        lines.append("")
+        lines.append(
+            "🚨 <b>Escalation Recommendation:</b> Consider sending a maintenance "
+            "notice to users via ⚠️ Critical Alert → Broadcast Warning."
+        )
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n… <i>(truncated)</i>"
+
+    kbd = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Full Retest",    callback_data="audit:retest"),
+            InlineKeyboardButton("📄 Full Report",    callback_data="audit:report"),
+        ],
+        [
+            InlineKeyboardButton("🛠 Auto Fix All",   callback_data="audit:autofix:all"),
+            InlineKeyboardButton("« Dashboard",       callback_data="audit:dashboard"),
+        ],
+        [
+            InlineKeyboardButton("« Admin Panel",     callback_data="admin:panel"),
+        ],
+    ])
+    return text, kbd
 
 
 def _render_history(bot_data: dict) -> tuple[str, InlineKeyboardMarkup]:
@@ -2002,6 +2138,16 @@ async def audit_callback(query, context, action: str) -> None:
             await query.answer("No critical issues detected.", show_alert=True)
             return
         text, kbd = _render_critical_alert(audit)
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception:
+            pass
+
+    # ── FundzAudit CEO Advisor ────────────────────────────────────────────────
+    elif action == "ceo_advisor":
+        await query.answer("Generating CEO advisory…")
+        audit = await _cached_audit()
+        text, kbd = _render_ceo_advisor(audit)
         try:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
         except Exception:

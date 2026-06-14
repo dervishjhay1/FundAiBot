@@ -11,12 +11,16 @@ skipped (verified = True for that entity).
 Architecture decision: network/API errors default to True (don't block users
 on Telegram outages).  Only an explicit "left" / "kicked" / "banned" status
 blocks access.
+
+Phase 1 upgrade: membership gate applied to ALL premium commands via
+require_membership() decorator, not just /start.
 """
 
 import asyncio
+import functools
 import time
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -27,6 +31,8 @@ from config.settings import (
     TELEGRAM_GROUP_ID,
     TELEGRAM_GROUP_NAME,
     TELEGRAM_GROUP_URL,
+    MEMBERSHIP_GATE_ENABLED,
+    is_admin,
 )
 from utils.logger import get_logger
 
@@ -137,6 +143,155 @@ def join_status_text(status: dict) -> str:
     return "   ".join(parts) if parts else ""
 
 
+def membership_gate_keyboard() -> InlineKeyboardMarkup:
+    """
+    Keyboard shown when a user fails the membership gate on a premium command.
+    Gives them direct join links + a verify button.
+    """
+    rows = []
+    if TELEGRAM_CHANNEL_ID and TELEGRAM_CHANNEL_URL:
+        rows.append([
+            InlineKeyboardButton(
+                f"📢 Join {TELEGRAM_CHANNEL_NAME or 'Channel'}",
+                url=TELEGRAM_CHANNEL_URL,
+            )
+        ])
+    if TELEGRAM_GROUP_ID and TELEGRAM_GROUP_URL:
+        rows.append([
+            InlineKeyboardButton(
+                f"👥 Join {TELEGRAM_GROUP_NAME or 'Community'}",
+                url=TELEGRAM_GROUP_URL,
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton("✅ I've Joined — Verify", callback_data="membership:verify"),
+    ])
+    rows.append([
+        InlineKeyboardButton("🏠 Main Menu", callback_data="menu:back"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+# ── Membership gate decorator ──────────────────────────────────────────────────
+
+def require_membership(func):
+    """
+    Decorator: gate any premium command behind membership verification.
+
+    Rules:
+    - Only active when MEMBERSHIP_GATE_ENABLED=true AND at least one community
+      (channel or group) is configured.
+    - Admins always bypass the gate.
+    - Private chats only — groups/channels are not gated.
+    - On failure: show a friendly join prompt with direct links + verify button.
+    - Cache is respected (5 min TTL) to avoid hammering Telegram API.
+    """
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Only gate when feature is enabled and communities are configured
+        if not MEMBERSHIP_GATE_ENABLED:
+            return await func(update, context)
+        if not (TELEGRAM_CHANNEL_ID or TELEGRAM_GROUP_ID):
+            return await func(update, context)
+
+        user = update.effective_user
+        if not user:
+            return await func(update, context)
+
+        # Admins always bypass
+        if is_admin(user.id):
+            return await func(update, context)
+
+        # Only gate private chats
+        chat = update.effective_chat
+        if chat and chat.type != "private":
+            return await func(update, context)
+
+        # Check membership
+        status = await check_membership(context.bot, user.id, context.bot_data)
+
+        if status["all_ok"]:
+            return await func(update, context)
+
+        # Build gate message
+        status_line = join_status_text(status)
+        parts = []
+        if not status["channel"] and status["need_channel"]:
+            parts.append(f"📢 <b>{TELEGRAM_CHANNEL_NAME or 'Official Channel'}</b>")
+        if not status["group"] and status["need_group"]:
+            parts.append(f"👥 <b>{TELEGRAM_GROUP_NAME or 'Community Group'}</b>")
+        missing_str = " and ".join(parts)
+
+        gate_text = (
+            f"🔒 <b>Community Membership Required</b>\n\n"
+            f"To use FundzAiBot's features, you need to join our community first.\n\n"
+            f"<b>Please join:</b>\n{chr(10).join('  ' + p for p in parts)}\n\n"
+        )
+        if status_line:
+            gate_text += f"<b>Your status:</b> {status_line}\n\n"
+        gate_text += (
+            f"After joining, tap <b>✅ I've Joined — Verify</b> to unlock access instantly! 🚀"
+        )
+
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text(
+                gate_text,
+                parse_mode="HTML",
+                reply_markup=membership_gate_keyboard(),
+            )
+        log.info(
+            "Membership gate blocked: user=%s command=%s channel=%s group=%s",
+            user.id, func.__name__, status["channel"], status["group"],
+        )
+        return None
+
+    return wrapper
+
+
+# ── Membership verify callback ──────────────────────────────────────────────────
+
+async def handle_membership_verify_callback(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Callback: user tapped '✅ I've Joined — Verify' on the membership gate.
+    Re-checks membership (clears cache first), then either unlocks or re-shows gate.
+    """
+    user = query.from_user
+    # Force fresh check
+    clear_membership_cache(user.id, context.bot_data)
+    status = await check_membership(context.bot, user.id, context.bot_data)
+
+    if status["all_ok"]:
+        await query.answer("✅ Verified! Full access unlocked.", show_alert=False)
+        try:
+            from utils.keyboards import main_menu
+            await query.edit_message_text(
+                f"✅ <b>Membership verified!</b>\n\n"
+                f"Welcome to FundzAiBot! 🚀 All features are now unlocked.\n\n"
+                f"Tap any command or use the menu below:",
+                parse_mode="HTML",
+                reply_markup=main_menu(),
+            )
+        except Exception:
+            pass
+    else:
+        status_line = join_status_text(status)
+        await query.answer(
+            "⚠️ We couldn't verify your membership yet.\n"
+            "Please join using the links above, then try again!",
+            show_alert=True,
+        )
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=membership_gate_keyboard()
+            )
+        except Exception:
+            pass
+    log.info(
+        "Membership verify callback: user=%s all_ok=%s", user.id, status["all_ok"]
+    )
+
+
 # ── ChatMemberHandler — detect when users leave channel/group ─────────────────
 
 async def membership_change_handler(
@@ -145,7 +300,7 @@ async def membership_change_handler(
 ) -> None:
     """
     Triggered whenever a user's status changes in the channel or group.
-    Clears their membership cache so the next /start re-checks correctly.
+    Clears their membership cache so the next command re-checks correctly.
     Optionally DMs them a reminder when they leave.
     """
     chat_member = update.chat_member

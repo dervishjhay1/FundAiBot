@@ -3,6 +3,10 @@ FundzAiBot — Master inline-keyboard callback dispatcher.
 Admin gets special routing: admin panel, bot settings, feature flag toggles.
 VIP menu is blocked for admin. Onboarding callbacks routed here too.
 Language selection callbacks handled here.
+
+Phase 1–6 upgrade:
+  • membership:verify — re-check membership gate on demand
+  • adminhelp:* — /admin_help category pages (9 categories)
 """
 
 import asyncio
@@ -41,6 +45,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     data: str = query.data or ""
     admin = is_admin(user.id)
     log.debug("Callback: user=%s admin=%s data=%s", user.id, admin, data)
+
+    # ── Membership verify callback ────────────────────────────────────────────
+    if data == "membership:verify":
+        await query.answer("Checking membership…")
+        from handlers.membership import handle_membership_verify_callback
+        await handle_membership_verify_callback(query, context)
+        return
+
+    # ── Admin Help category callbacks ─────────────────────────────────────────
+    if data.startswith("adminhelp:"):
+        if not admin:
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+        action = data[len("adminhelp:"):]
+        from handlers.admin import handle_adminhelp_callback, handle_adminhelp_index_callback
+        if action == "index":
+            await handle_adminhelp_index_callback(query)
+        else:
+            await handle_adminhelp_callback(query, action)
+        return
 
     # ── Broadcast confirm / cancel ────────────────────────────────────────────
     if data.startswith("broadcast:"):
@@ -246,7 +270,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"<code>/updateannouncement &lt;text&gt;</code> — Edit current\n"
                 f"<code>/unpin</code> — Remove announcement\n"
                 f"<code>/pinphoto &lt;url&gt;</code> — Add banner image\n"
-                f"<code>/listannouncements</code> — View history"
+                f"<code>/listannouncements</code> — View history\n"
+                f"<code>/announce_channel</code> — Push to channel\n"
+                f"<code>/announce_group</code> — Push to group\n"
+                f"<code>/announce_both</code> — Push to both\n"
+                f"<code>/pin_priority &lt;msg&gt;</code> — High priority (always shows)\n"
+                f"<code>/schedule_announcement &lt;dt&gt; &lt;msg&gt;</code> — Schedule"
             )
         else:
             text = (
@@ -254,6 +283,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"<b>Status:</b> ⚫ No active announcement\n\n"
                 f"<b>Commands:</b>\n"
                 f"<code>/pin &lt;message&gt;</code> — Create announcement\n"
+                f"<code>/pin_priority &lt;message&gt;</code> — High priority announcement\n"
+                f"<code>/schedule_announcement &lt;dt&gt; &lt;msg&gt;</code> — Schedule\n"
                 f"<code>/listannouncements</code> — View history"
             )
         try:

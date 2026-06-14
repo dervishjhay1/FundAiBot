@@ -47,11 +47,13 @@ from handlers.admin import (
     admin_config_handler, admin_setcredits_handler, admin_resetuser_handler,
     admin_clearlogs_handler, admin_addadmin_handler, admin_removeadmin_handler,
     admin_listadmins_handler, admin_dm_handler,
+    admin_help_handler, admin_clearchat_handler,
 )
 from handlers.announcements import (
     pin_handler, unpin_handler, updateannouncement_handler,
     pinphoto_handler, listannouncements_handler,
     announce_channel_handler, announce_group_handler, announce_both_handler,
+    pin_priority_handler, schedule_announcement_handler,
 )
 from handlers.ai_commands import (
     ask_handler, code_handler, summarize_handler, translate_handler,
@@ -66,7 +68,10 @@ from handlers.retouch import photo_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
-from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter
+from handlers.group import (
+    new_member_handler, group_ai_handler, mention_handler,
+    spam_filter, group_command_blocker,
+)
 from handlers.membership import membership_change_handler
 from handlers.profile import profile_handler, referral_handler, history_handler, stats_handler
 from handlers.payment import subscribe_handler, precheckout_handler, successful_payment_handler
@@ -148,22 +153,44 @@ async def post_init(application: Application) -> None:
 
     # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
     admin_commands = public_commands + [
-        BotCommand("health",            "🩺 Live health dashboard"),
-        BotCommand("status",            "📊 Live bot status"),
-        BotCommand("testaudit",         "🔬 Enterprise audit center"),
-        BotCommand("broadcast",         "📢 Broadcast message to all users"),
-        BotCommand("admin",             "👑 Admin dashboard"),
-        BotCommand("admin_stats",       "📊 Platform statistics"),
-        BotCommand("admin_users",       "👥 User management"),
-        BotCommand("admin_ban",         "🚫 Ban a user"),
-        BotCommand("admin_setvip",      "💎 Set VIP status"),
-        BotCommand("admin_addcredits",  "➕ Add credits"),
-        BotCommand("admin_logs",        "📋 Recent error logs"),
-        BotCommand("admin_clearlogs",   "🗑️ Clear error logs"),
-        BotCommand("admin_health",      "🩺 AI health check"),
-        BotCommand("testbroadcast",     "👁️ Preview active announcement"),
-        BotCommand("pin",               "📌 Create announcement"),
-        BotCommand("announce_both",     "📣 Push to channel + group"),
+        BotCommand("health",               "🩺 Live health dashboard"),
+        BotCommand("status",               "📊 Live bot status"),
+        BotCommand("testaudit",            "🔬 Enterprise audit center"),
+        BotCommand("broadcast",            "📢 Broadcast message to all users"),
+        BotCommand("admin",                "👑 Admin dashboard"),
+        BotCommand("admin_help",           "📖 Admin command reference (grouped)"),
+        BotCommand("admin_stats",          "📊 Platform statistics"),
+        BotCommand("admin_users",          "👥 User management"),
+        BotCommand("admin_user",           "🔍 View user profile"),
+        BotCommand("admin_ban",            "🚫 Ban a user"),
+        BotCommand("admin_unban",          "✅ Unban a user"),
+        BotCommand("admin_setvip",         "💎 Set VIP status"),
+        BotCommand("admin_addcredits",     "➕ Add bonus credits"),
+        BotCommand("admin_setcredits",     "🔢 Set credits to exact amount"),
+        BotCommand("admin_resetlimit",     "⏱️ Clear rate limit"),
+        BotCommand("admin_resetuser",      "🔄 Full user reset"),
+        BotCommand("admin_clearchat",      "🧹 Clear user chat history"),
+        BotCommand("admin_dm",             "📬 DM any user"),
+        BotCommand("admin_logs",           "📋 Recent error logs"),
+        BotCommand("admin_clearlogs",      "🗑️ Clear error logs"),
+        BotCommand("admin_health",         "🩺 AI health check"),
+        BotCommand("admin_config",         "⚙️ Full configuration view"),
+        BotCommand("admin_images",         "🖼️ Recent image generations"),
+        BotCommand("admin_addadmin",       "👑 Promote to admin (owner only)"),
+        BotCommand("admin_removeadmin",    "🗑️ Remove admin (owner only)"),
+        BotCommand("admin_listadmins",     "📋 List all admins"),
+        BotCommand("admin_onboarding",     "🚀 Onboarding stats & config"),
+        BotCommand("testbroadcast",        "👁️ Preview active announcement"),
+        BotCommand("pin",                  "📌 Create announcement"),
+        BotCommand("pin_priority",         "⚡ High-priority announcement"),
+        BotCommand("schedule_announcement","🗓️ Schedule a future announcement"),
+        BotCommand("unpin",                "🗑️ Remove announcement"),
+        BotCommand("updateannouncement",   "✏️ Edit current announcement"),
+        BotCommand("pinphoto",             "🖼️ Add/remove banner image"),
+        BotCommand("listannouncements",    "📜 Announcement history"),
+        BotCommand("announce_channel",     "📢 Push to channel"),
+        BotCommand("announce_group",       "👥 Push to group"),
+        BotCommand("announce_both",        "📣 Push to channel + group"),
     ]
 
     # Set public list for everyone
@@ -317,6 +344,7 @@ def build_app() -> Application:
 
     # ── Admin — dashboard & monitoring ───────────────────────────────────────
     app.add_handler(CommandHandler("admin",              admin_handler))
+    app.add_handler(CommandHandler("admin_help",         admin_help_handler))
     app.add_handler(CommandHandler("admin_stats",        admin_stats_handler))
     app.add_handler(CommandHandler("admin_health",       admin_health_handler))
     app.add_handler(CommandHandler("admin_config",       admin_config_handler))
@@ -334,6 +362,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("admin_setcredits",   admin_setcredits_handler))
     app.add_handler(CommandHandler("admin_resetlimit",   admin_resetlimit_handler))
     app.add_handler(CommandHandler("admin_resetuser",    admin_resetuser_handler))
+    app.add_handler(CommandHandler("admin_clearchat",    admin_clearchat_handler))
 
     # ── Admin — communication ─────────────────────────────────────────────────
     app.add_handler(CommandHandler("admin_broadcast",    admin_broadcast_handler))
@@ -355,14 +384,16 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("testaudit",          testaudit_handler))
 
     # ── Announcements ─────────────────────────────────────────────────────────
-    app.add_handler(CommandHandler("pin",                pin_handler))
-    app.add_handler(CommandHandler("unpin",              unpin_handler))
-    app.add_handler(CommandHandler("updateannouncement", updateannouncement_handler))
-    app.add_handler(CommandHandler("pinphoto",           pinphoto_handler))
-    app.add_handler(CommandHandler("listannouncements",  listannouncements_handler))
-    app.add_handler(CommandHandler("announce_channel",   announce_channel_handler))
-    app.add_handler(CommandHandler("announce_group",     announce_group_handler))
-    app.add_handler(CommandHandler("announce_both",      announce_both_handler))
+    app.add_handler(CommandHandler("pin",                      pin_handler))
+    app.add_handler(CommandHandler("pin_priority",             pin_priority_handler))
+    app.add_handler(CommandHandler("schedule_announcement",    schedule_announcement_handler))
+    app.add_handler(CommandHandler("unpin",                    unpin_handler))
+    app.add_handler(CommandHandler("updateannouncement",       updateannouncement_handler))
+    app.add_handler(CommandHandler("pinphoto",                 pinphoto_handler))
+    app.add_handler(CommandHandler("listannouncements",        listannouncements_handler))
+    app.add_handler(CommandHandler("announce_channel",         announce_channel_handler))
+    app.add_handler(CommandHandler("announce_group",           announce_group_handler))
+    app.add_handler(CommandHandler("announce_both",            announce_both_handler))
 
     # ── Inline keyboard callbacks ─────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(callback_handler))
@@ -373,11 +404,24 @@ def build_app() -> Application:
     # ── Group integration ─────────────────────────────────────────────────────
     # /ai command only in groups — private chats use chat_handler (with full guardrails)
     app.add_handler(CommandHandler("ai", group_ai_handler, filters=filters.ChatType.GROUPS))
+
     # Welcome new group members
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
+
+    # Block non-admin commands in groups (except /ai and explicit group commands above)
+    # group=0 catches all group commands; runs AFTER specific group commands registered above
+    app.add_handler(
+        MessageHandler(
+            filters.COMMAND & filters.ChatType.GROUPS,
+            group_command_blocker,
+        ),
+        group=3,
+    )
+
     # Membership monitoring — detects when users leave the channel or group
     # Requires "Track all member changes" enabled in Bot Settings on Telegram
     app.add_handler(ChatMemberHandler(membership_change_handler))
+
     # @mention reply — group 1 so it runs alongside spam_filter
     app.add_handler(
         MessageHandler(

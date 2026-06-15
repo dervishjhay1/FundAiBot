@@ -10,7 +10,7 @@ import html
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config.settings import is_admin, FEATURE_FLAGS
+from config.settings import is_admin, FEATURE_FLAGS, WEB_SEARCH_ENABLED, WEB_SEARCH_MAX_RESULTS
 from services.ai_service import get_ai_response
 from services.database import (
     get_or_create_user, can_use_chat, increment_chat,
@@ -122,6 +122,28 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         messages_for_ai = history + [{"role": "user", "content": prompt}]
         log.info("[CHAT] STAGE 5 — history loaded: %d messages", len(messages_for_ai))
+
+        # ── STAGE 5b: Web search context injection ─────────────────────────────
+        # Auto-inject live web results for time-sensitive or current-events queries.
+        # DuckDuckGo search — no API key required.
+        if FEATURE_FLAGS.get("web_search_enabled", True) and WEB_SEARCH_ENABLED:
+            try:
+                from services.web_search import should_search, search_web, format_search_context, extract_urls, fetch_url_text, format_url_context
+                urls = extract_urls(prompt)
+                if urls:
+                    url_text = await loop.run_in_executor(None, fetch_url_text, urls[0])
+                    if url_text:
+                        ctx = format_url_context(urls[0], url_text)
+                        messages_for_ai = [{"role": "system", "content": ctx}] + messages_for_ai
+                        log.info("[CHAT] URL context injected: %s", urls[0][:60])
+                elif should_search(prompt):
+                    results = await loop.run_in_executor(None, search_web, prompt, WEB_SEARCH_MAX_RESULTS)
+                    if results:
+                        ctx = format_search_context(results, prompt)
+                        messages_for_ai = [{"role": "system", "content": ctx}] + messages_for_ai
+                        log.info("[CHAT] Web search context injected: %d results", len(results))
+            except Exception as _ws_exc:
+                log.debug("[CHAT] Web search skipped: %s", _ws_exc)
 
         # ── STAGE 6: Call AI provider ──────────────────────────────────────────
         log.info("[CHAT] STAGE 6 — calling AI provider: user=%s", uid)

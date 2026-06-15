@@ -193,10 +193,24 @@ def is_admin(user_id: int) -> bool:
     return (bool(ADMIN_USER_ID) and uid == int(ADMIN_USER_ID)) or uid in SECONDARY_ADMINS
 
 
+# ── Web search ────────────────────────────────────────────────────────────────
+# DuckDuckGo — no API key required. Set WEB_SEARCH_ENABLED=false to disable.
+WEB_SEARCH_ENABLED:     bool = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
+WEB_SEARCH_MAX_RESULTS: int  = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
+
+# ── Voice transcription ────────────────────────────────────────────────────────
+# Requires GEMINI_API_KEY. Set VOICE_ENABLED=false to disable.
+VOICE_ENABLED: bool = os.getenv("VOICE_ENABLED", "true").lower() == "true"
+
+# ── Session secret (Flask sessions / future use) ──────────────────────────────
+SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-railway")
+
 # ── Runtime feature flags ─────────────────────────────────────────────────────
 FEATURE_FLAGS: dict[str, bool] = {
-    "chat_enabled":      True,
-    "image_enabled":     True,
-    "new_users_enabled": True,
-    "maintenance_mode":  False,
+    "chat_enabled":       True,
+    "image_enabled":      True,
+    "new_users_enabled":  True,
+    "maintenance_mode":   False,
+    "web_search_enabled": WEB_SEARCH_ENABLED,
+    "voice_enabled":      VOICE_ENABLED,
 }

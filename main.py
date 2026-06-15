@@ -65,6 +65,7 @@ from handlers.extras import feedback_handler, leaderboard_handler, streak_handle
 from handlers.help import help_handler, about_handler
 from handlers.image import image_command_handler, _pending, handle_image_prompt_message
 from handlers.retouch import photo_handler
+from handlers.voice import voice_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
@@ -400,6 +401,13 @@ def build_app() -> Application:
 
     # ── Photo messages — AI retouching ───────────────────────────────────────
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, photo_handler))
+
+    # ── Voice & audio messages — transcription + AI response ──────────────────
+    # Private chats only — groups use /ai or @mention for AI interaction
+    app.add_handler(MessageHandler(
+        (filters.VOICE | filters.AUDIO) & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        voice_handler,
+    ))
 
     # ── Group integration ─────────────────────────────────────────────────────
     # /ai command only in groups — private chats use chat_handler (with full guardrails)

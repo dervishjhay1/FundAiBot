@@ -66,7 +66,11 @@ def health():
     Railway liveness probe — responds immediately so the container is never
     killed mid-request.  Always returns 200 while the Python process is alive.
     """
-    return jsonify({"status": "ok", "uptime_seconds": _uptime()}), 200
+    return jsonify({
+        "status":         "ok",
+        "version":        BOT_VERSION,
+        "uptime_seconds": _uptime(),
+    }), 200
 
 
 @app.route("/ready")

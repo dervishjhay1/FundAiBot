@@ -21,6 +21,22 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CRITICAL: Flask starts HERE — at module level, BEFORE every other import.
+#
+# Python executes ALL top-level imports before main() is ever called.
+# If any import (handlers, ai_service, queue_manager…) blocks for >N seconds,
+# main() is never reached and Flask never starts — healthcheck fails.
+#
+# By starting Flask here:
+#   • keepalive.py only needs config.settings (env-var reads, zero network I/O)
+#   • /health responds in < 2 seconds, regardless of what happens next
+#   • Railway's 120-second healthcheckTimeout gives 118 s of startup budget
+#   • start_keepalive() is idempotent — the call inside main() is a safe no-op
+# ─────────────────────────────────────────────────────────────────────────────
+from services.keepalive import start_keepalive as _early_keepalive, mark_ready
+_early_keepalive()
+
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.ext import (
     Application,

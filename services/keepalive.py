@@ -366,7 +366,18 @@ def run_flask() -> None:
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False, use_reloader=False)
 
 
+_keepalive_thread: threading.Thread | None = None
+
+
 def start_keepalive() -> threading.Thread:
-    t = threading.Thread(target=run_flask, name="keepalive", daemon=True)
-    t.start()
-    return t
+    """
+    Start the Flask keep-alive thread (idempotent — safe to call multiple times).
+    Second and subsequent calls return the existing thread without restarting.
+    """
+    global _keepalive_thread
+    if _keepalive_thread is not None and _keepalive_thread.is_alive():
+        log.debug("Flask keep-alive already running (pid=%s) — skipped.", _keepalive_thread.ident)
+        return _keepalive_thread
+    _keepalive_thread = threading.Thread(target=run_flask, name="keepalive", daemon=True)
+    _keepalive_thread.start()
+    return _keepalive_thread

@@ -145,3 +145,31 @@ def format_url_context(url: str, text: str) -> str:
         f"{text}\n"
         "[End of URL content — summarize or answer based on the above]"
     )
+
+
+def search_news(query: str, max_results: int = 6) -> list[dict]:
+    """
+    Search recent news via DuckDuckGo News.
+    Returns list of {title, url, source, date, body}.
+    Synchronous — call via run_in_executor.
+    """
+    try:
+        from duckduckgo_search import DDGS
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.news(query or "world news today", max_results=max_results):
+                results.append({
+                    "title":  (r.get("title") or "")[:120],
+                    "url":    r.get("url") or r.get("href") or "",
+                    "source": r.get("source") or r.get("publisher") or "",
+                    "date":   (r.get("date") or "")[:10],
+                    "body":   (r.get("body") or "")[:200],
+                })
+        log.info("News search: %r → %d results", query[:60], len(results))
+        return results
+    except ImportError:
+        log.warning("duckduckgo_search not installed — news disabled")
+        return []
+    except Exception as exc:
+        log.warning("News search error (%s): %s", type(exc).__name__, str(exc)[:120])
+        return []

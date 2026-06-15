@@ -66,6 +66,11 @@ from handlers.help import help_handler, about_handler
 from handlers.image import image_command_handler, _pending, handle_image_prompt_message
 from handlers.retouch import photo_handler
 from handlers.voice import voice_handler
+from handlers.tools import (
+    weather_handler, calc_handler, qr_handler, crypto_handler,
+    wiki_handler, news_handler, currency_handler, quote_handler,
+)
+from handlers.document import document_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
@@ -150,6 +155,14 @@ async def post_init(application: Application) -> None:
         BotCommand("feedback",    "Send feedback or report a bug"),
         BotCommand("leaderboard", "Top referrers leaderboard"),
         BotCommand("streak",      "Your daily chat streak"),
+        BotCommand("weather",     "🌤️ Live weather forecast"),
+        BotCommand("calc",        "🧮 Smart calculator"),
+        BotCommand("qr",          "📱 Generate QR code"),
+        BotCommand("crypto",      "₿ Live crypto prices"),
+        BotCommand("wiki",        "📖 Wikipedia lookup"),
+        BotCommand("news",        "📰 Latest news headlines"),
+        BotCommand("currency",    "💱 Currency converter"),
+        BotCommand("quote",       "💬 Daily inspiration"),
     ]
 
     # ── Admin commands — visible ONLY in the admin's chat ─────────────────────
@@ -409,6 +422,22 @@ def build_app() -> Application:
         voice_handler,
     ))
 
+    # ── Document / file analysis ───────────────────────────────────────────────
+    app.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        document_handler,
+    ))
+
+    # ── Utility tool commands ─────────────────────────────────────────────────
+    app.add_handler(CommandHandler("weather",  weather_handler))
+    app.add_handler(CommandHandler("calc",     calc_handler))
+    app.add_handler(CommandHandler("qr",       qr_handler))
+    app.add_handler(CommandHandler("crypto",   crypto_handler))
+    app.add_handler(CommandHandler("wiki",     wiki_handler))
+    app.add_handler(CommandHandler("news",     news_handler))
+    app.add_handler(CommandHandler("currency", currency_handler))
+    app.add_handler(CommandHandler("quote",    quote_handler))
+
     # ── Group integration ─────────────────────────────────────────────────────
     # /ai command only in groups — private chats use chat_handler (with full guardrails)
     app.add_handler(CommandHandler("ai", group_ai_handler, filters=filters.ChatType.GROUPS))
@@ -475,7 +504,7 @@ def _run_dev_mode() -> None:
     log.info("  To deploy the bot: push to GitHub → Railway auto-deploys.")
     log.info("  DO NOT attempt to bypass this guard — it protects production.")
     log.info(_SEPARATOR)
-    start_keepalive()
+    # Flask is already running (started at top of main())
     mark_ready()
     try:
         while True:
@@ -485,9 +514,25 @@ def _run_dev_mode() -> None:
 
 
 def main() -> None:
+    # ── Flask starts FIRST — /health must respond during entire boot sequence ──
+    # All init errors below are caught. The process never exits, so the health
+    # endpoint always has a live Python process behind it on Railway.
+    start_keepalive()
+
     _print_startup_banner()
 
-    require_config()
+    try:
+        require_config()
+    except EnvironmentError as exc:
+        log.critical("FATAL — missing Railway env vars: %s", exc)
+        log.critical("Bot polling disabled. Fix variables in Railway → Variables tab, then redeploy.")
+        mark_ready()   # health endpoint returns 200 so Railway doesn't restart-loop
+        try:
+            while True:
+                time.sleep(3600)
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        return
 
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
@@ -522,7 +567,7 @@ def main() -> None:
     except Exception as exc:
         log.warning("Could not seed default announcement: %s", exc)
 
-    start_keepalive()
+    # Flask is already running (started at top of main())
     start_vip_scheduler()
 
     app = build_app()

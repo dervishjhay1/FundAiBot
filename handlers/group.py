@@ -32,15 +32,16 @@ log = get_logger(__name__)
 # ── Anti-spam config ──────────────────────────────────────────────────────────
 
 _SCAM_RE = re.compile(
+    r"(?i)"
     r"t\.me/[a-zA-Z0-9_]{3,}"
     r"|telegram\.me/"
     r"|bit\.ly/"
     r"|tinyurl\.com/"
-    r"|(?i)(free\s+(?:btc|eth|usdt|crypto|money))"
-    r"|(?i)(earn\s+\d+\s*(btc|eth|usdt|\$))"
-    r"|(?i)(double\s+your\s+(money|bitcoin|crypto))"
-    r"|(?i)(guaranteed\s+profit)"
-    r"|(?i)(investment\s+returns?)",
+    r"|(free\s+(?:btc|eth|usdt|crypto|money))"
+    r"|(earn\s+\d+\s*(btc|eth|usdt|\$))"
+    r"|(double\s+your\s+(money|bitcoin|crypto))"
+    r"|(guaranteed\s+profit)"
+    r"|(investment\s+returns?)",
 )
 
 _WARN_STORE: dict[int, list[datetime]] = {}

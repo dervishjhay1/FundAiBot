@@ -117,13 +117,40 @@ def grant_group_reward(user_id: int) -> bool:
         return False
 
 
+def _is_onboarding_table_available() -> bool:
+    """Return True if the onboarding table exists and is reachable in Supabase."""
+    try:
+        r = _safe_get(
+            f"{_url('onboarding')}?limit=0",
+            headers=_headers(),
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def needs_onboarding(user_id: int, is_new: bool) -> bool:
     """
     Returns True if the user should see the onboarding flow.
-    New users always see it. Existing users skip if already complete.
+
+    New users always see it. For returning users:
+      - If the onboarding table is unavailable (not yet created in Supabase),
+        skip onboarding entirely — never trap returning users in an infinite loop.
+      - If the table exists but this user has no row yet, show onboarding.
+      - If the table exists and onboarding_complete=True, skip.
     """
     if is_new:
         return True
+
+    # Guard: if the onboarding table doesn't exist yet, don't loop returning users.
+    if not _is_onboarding_table_available():
+        log.warning(
+            "needs_onboarding: onboarding table unavailable — skipping for returning user %s. "
+            "Run supabase_onboarding_schema.sql in Supabase SQL Editor to enable onboarding.",
+            user_id,
+        )
+        return False
+
     row = get_onboarding(user_id)
     if not row:
         return True

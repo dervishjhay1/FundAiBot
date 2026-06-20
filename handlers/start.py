@@ -65,6 +65,25 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     uid   = user.id
     admin = is_admin(uid)
 
+    try:
+        await _start_handler_inner(update, context, uid, admin)
+    except Exception as exc:
+        log.error("start_handler unhandled exception for user=%s: %s", uid, exc, exc_info=True)
+        try:
+            await update.message.reply_text(
+                "👋 <b>Welcome to FundzAiBot!</b>\n\n"
+                "Something went wrong during startup. Please try /start again in a moment.",
+                parse_mode="HTML",
+                reply_markup=main_menu(),
+            )
+        except Exception as final_exc:
+            log.error("start_handler: could not send fallback reply: %s", final_exc)
+
+
+async def _start_handler_inner(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int, admin: bool
+) -> None:
+    user = update.effective_user
     loop = asyncio.get_running_loop()
 
     # ── Admin welcome — bypass all normal flow ─────────────────────────────────

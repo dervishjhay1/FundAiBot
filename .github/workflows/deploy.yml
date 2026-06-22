@@ -1,0 +1,51 @@
+name: Validate & Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Python Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check — all .py files
+        run: |
+          python - <<'EOF'
+          import ast, os, sys
+          errors = []
+          skip = {"__pycache__", ".git", "fundzaibot"}
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in skip]
+              for f in files:
+                  if not f.endswith(".py"):
+                      continue
+                  path = os.path.join(root, f)
+                  try:
+                      ast.parse(open(path).read())
+                  except SyntaxError as e:
+                      errors.append(f"{path}: {e}")
+          if errors:
+              print("SYNTAX ERRORS FOUND:")
+              for e in errors:
+                  print(" ", e)
+              sys.exit(1)
+          print(f"✅ All .py files syntax-clean")
+          EOF
+
+      - name: Verify entry point exists
+        run: |
+          test -f main.py        || (echo "❌ main.py missing" && exit 1)
+          test -f requirements.txt || (echo "❌ requirements.txt missing" && exit 1)
+          test -f railway.json   || (echo "❌ railway.json missing" && exit 1)
+          echo "✅ Entry point and deployment config verified"

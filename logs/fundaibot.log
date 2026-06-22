@@ -305,3 +305,74 @@ UnboundLocalError: cannot access local variable 'get_user_language' where it is 
 2026-06-22 00:18:25 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=audit:section:railway
 2026-06-22 00:35:30 | WARNING  | __main__                       | Transient infra error: httpx.ReadError: 
 2026-06-22 00:39:05 | WARNING  | __main__                       | Transient infra error: httpx.ReadError: 
+2026-06-22 00:43:39 | INFO     | handlers.start                 | /start admin=8972905931 lang=en
+2026-06-22 00:43:51 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:profile
+2026-06-22 00:44:17 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:language
+2026-06-22 00:44:22 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=lang:pt
+2026-06-22 00:44:23 | DEBUG    | services.language              | Loaded locale JSON: pt (26 keys)
+2026-06-22 00:44:23 | INFO     | handlers.language              | Language set: user=8972905931 lang=pt
+2026-06-22 00:44:31 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:language
+2026-06-22 00:44:34 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=lang:ar
+2026-06-22 00:44:35 | DEBUG    | services.language              | Loaded locale JSON: ar (26 keys)
+2026-06-22 00:44:36 | INFO     | handlers.language              | Language set: user=8972905931 lang=ar
+2026-06-22 00:44:39 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:language
+2026-06-22 00:44:41 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=lang:en
+2026-06-22 00:44:42 | INFO     | handlers.language              | Language set: user=8972905931 lang=en
+2026-06-22 00:45:21 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 3 — sending indicator: user=8972905931 target=Spanish
+2026-06-22 00:45:22 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 4 — calling AI provider: user=8972905931 model=auto
+2026-06-22 00:45:22 | DEBUG    | services.ai_service            | Trying provider: OpenRouter
+2026-06-22 00:45:22 | WARNING  | services.ai_service            | OpenRouter 401 — invalid API key. Falling back to Gemini.
+2026-06-22 00:45:22 | WARNING  | services.ai_service            | OpenRouter HTTP 401 — trying next provider
+2026-06-22 00:45:22 | DEBUG    | services.ai_service            | Trying provider: Gemini
+2026-06-22 00:45:22 | DEBUG    | services.ai_service            | Skipping Gemini — no GEMINI_API_KEY
+2026-06-22 00:45:22 | DEBUG    | services.ai_service            | Trying provider: HuggingFace
+2026-06-22 00:45:22 | DEBUG    | services.ai_service            | Skipping HuggingFace — no HUGGINGFACE_API_KEY
+2026-06-22 00:45:22 | ERROR    | services.ai_service            | All AI providers failed — returning unavailable message to user
+2026-06-22 00:45:22 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 5 — AI response: user=8972905931 provider=none len=76
+2026-06-22 00:45:22 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 6 — sending reply: user=8972905931
+2026-06-22 00:45:23 | INFO     | handlers.ai_commands           | [TRANSLATE] DONE: user=8972905931 target=Spanish provider=none len=76
+2026-06-22 00:45:32 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=admin:panel
+2026-06-22 00:45:43 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=admin:announcement
+2026-06-22 00:46:05 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=admin:finduser
+2026-06-22 00:47:37 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=adminhelp:broadcast
+2026-06-22 00:49:16 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=broadcast:confirm
+2026-06-22 00:49:16 | ERROR    | __main__                       | Unhandled error — user=8972905931: cannot access local variable 'asyncio' where it is not associated with a value
+Traceback (most recent call last):
+  File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/telegram/ext/_application.py", line 1335, in process_update
+    await coroutine
+  File "/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/telegram/ext/_handlers/basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/workspace/bot/handlers/callbacks.py", line 103, in callback_handler
+    asyncio.create_task(
+    ^^^^^^^
+UnboundLocalError: cannot access local variable 'asyncio' where it is not associated with a value
+2026-06-22 00:55:24 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:referral
+2026-06-22 00:55:36 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:image
+2026-06-22 00:55:39 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=imgstyle:classical
+2026-06-22 00:55:42 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:back
+2026-06-22 00:59:16 | INFO     | handlers.announcements         | Admin pinned HIGH PRIORITY announcement: user=8972905931
+2026-06-22 00:59:43 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=announce:nav:1
+2026-06-22 00:59:54 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=announce:nav:2
+2026-06-22 00:59:59 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=announce:nav:1
+2026-06-22 01:00:01 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=announce:nav:0
+2026-06-22 01:00:21 | INFO     | handlers.start                 | /start user=8914616376 new=False → main menu
+2026-06-22 01:01:40 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=menu:help
+2026-06-22 01:01:41 | INFO     | handlers.help                  | /help user=8972905931
+2026-06-22 01:02:54 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 3 — sending indicator: user=8972905931 target=Arabic
+2026-06-22 01:02:54 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 4 — calling AI provider: user=8972905931 model=auto
+2026-06-22 01:02:54 | DEBUG    | services.ai_service            | Trying provider: OpenRouter
+2026-06-22 01:02:54 | WARNING  | services.ai_service            | OpenRouter 401 — invalid API key. Falling back to Gemini.
+2026-06-22 01:02:54 | WARNING  | services.ai_service            | OpenRouter HTTP 401 — trying next provider
+2026-06-22 01:02:54 | DEBUG    | services.ai_service            | Trying provider: Gemini
+2026-06-22 01:02:54 | DEBUG    | services.ai_service            | Skipping Gemini — no GEMINI_API_KEY
+2026-06-22 01:02:54 | DEBUG    | services.ai_service            | Trying provider: HuggingFace
+2026-06-22 01:02:54 | DEBUG    | services.ai_service            | Skipping HuggingFace — no HUGGINGFACE_API_KEY
+2026-06-22 01:02:54 | ERROR    | services.ai_service            | All AI providers failed — returning unavailable message to user
+2026-06-22 01:02:54 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 5 — AI response: user=8972905931 provider=none len=76
+2026-06-22 01:02:55 | INFO     | handlers.ai_commands           | [TRANSLATE] STAGE 6 — sending reply: user=8972905931
+2026-06-22 01:02:55 | INFO     | handlers.ai_commands           | [TRANSLATE] DONE: user=8972905931 target=Arabic provider=none len=76
+2026-06-22 01:03:44 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=audit:critical_alert
+2026-06-22 01:04:10 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=audit:broadcast_warn
+2026-06-22 01:04:36 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=audit:dashboard
+2026-06-22 01:04:41 | DEBUG    | handlers.callbacks             | Callback: user=8972905931 admin=True data=audit:ceo_advisor

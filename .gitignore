@@ -1,0 +1,48 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Runtime output
+logs/*.log
+logs/*.log.*
+data/*.json
+data/*.db
+data/*.sqlite
+
+# Secrets & local config
+*.pem
+*.key
+*.p12
+secrets/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Replit-specific
+.cache/
+.local/
+replit.nix

@@ -127,7 +127,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         from services.database import get_announcement_history
         from handlers.announcements import format_announcement_card
         from utils.keyboards import announcement_keyboard
-        from services.language import get_user_language
 
         db_user2 = await loop.run_in_executor(
             None, lambda: get_or_create_user(user.id, first_name=user.first_name or "")

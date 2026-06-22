@@ -114,6 +114,9 @@ def bootstrap_schema() -> None:
     Check all required tables exist via the Supabase REST API.
     Tables must be created once via the Supabase SQL Editor using supabase_schema.sql.
     Logs a clear warning for any missing table but does NOT crash the bot.
+
+    Also ensures the ``language`` column exists on the users table by probing
+    the column directly and logging a one-time warning if it is absent.
     """
     tables = ["users", "user_credits", "conversations", "image_history", "referrals", "error_logs"]
     missing = []
@@ -138,6 +141,23 @@ def bootstrap_schema() -> None:
         )
     else:
         log.info("✅ All Supabase tables verified.")
+
+    # ── Language column check ─────────────────────────────────────────────────
+    # The ``language`` column is added by supabase_language_schema.sql.
+    # Probe it by selecting it from users; a 400 with "column … does not exist"
+    # means the migration hasn't been run yet — warn clearly but don't crash.
+    try:
+        r = _safe_get(f"{_url('users')}?select=language&limit=1", headers=_headers())
+        if r.status_code == 200:
+            log.info("✅ Language column verified on users table.")
+        elif r.status_code in (400, 404) and "language" in r.text.lower():
+            log.warning(
+                "⚠️  'language' column missing on users table — "
+                "run supabase_language_schema.sql in Supabase SQL Editor to enable language support."
+            )
+        # Any other status is a transient error — silently ignore
+    except Exception as exc:
+        log.debug("Language column check skipped: %s", exc)
 
 
 # ── VIP expiry helper ─────────────────────────────────────────────────────────

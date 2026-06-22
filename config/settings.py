@@ -3,12 +3,13 @@ FundAiBot — Central configuration.
 All environment variables and constants live here.
 Every other module imports from this file.
 
-DEPLOYMENT POLICY — RAILWAY ONLY:
-  Telegram polling ONLY starts when Railway environment variables are detected.
-  There is NO override mechanism. ALLOW_POLLING is permanently removed.
-  Any attempt to run the bot outside Railway will start Flask keep-alive only
-  and log a clear rejection. This prevents duplicate polling, 409 Conflicts,
-  and accidental production incidents from dev/Replit environments.
+DEPLOYMENT POLICY:
+  Telegram polling starts when IS_RAILWAY is True (Railway auto-injects its env vars)
+  OR when ALLOW_POLLING=true is explicitly set in environment variables.
+
+  ALLOW_POLLING=true is the safe override for Replit testing. It is intentional —
+  use it only when Railway is NOT also running the same token, or you will get
+  Telegram 409 Conflict errors (two instances polling the same bot).
 """
 
 import os
@@ -126,18 +127,10 @@ MEMBERSHIP_GATE_ENABLED: bool = os.getenv("MEMBERSHIP_GATE_ENABLED", "false").lo
 # Example: https://fundzaibot.up.railway.app
 BOT_WEB_URL: str = os.getenv("BOT_WEB_URL", "").rstrip("/")
 
-# ── Deployment environment detection — RAILWAY ONLY ──────────────────────────
+# ── Deployment environment detection ─────────────────────────────────────────
 #
 # Railway automatically injects these environment variables into every service.
 # None of them will be present in Replit, local dev, or any other platform.
-#
-# ALLOW_POLLING override has been permanently removed.
-# Telegram polling starts ONLY when IS_RAILWAY is True.
-# There is NO escape hatch — this is by design to prevent duplicate instances,
-# Telegram 409 Conflict errors, and dropped messages.
-#
-# If you need to test locally, point your local environment at a TEST bot token
-# and manually deploy to Railway. Do NOT attempt to bypass this guard.
 #
 IS_RAILWAY: bool = bool(
     os.getenv("RAILWAY_ENVIRONMENT") or      # e.g. "production"
@@ -146,9 +139,11 @@ IS_RAILWAY: bool = bool(
     os.getenv("RAILWAY_SERVICE_ID")          # UUID
 )
 
-# ALLOW_POLLING override is permanently disabled — Railway detection only.
-# (Kept as a constant for audit/display purposes — always False outside Railway.)
-ALLOW_POLLING: bool = IS_RAILWAY
+# ALLOW_POLLING: True on Railway automatically.
+# Set ALLOW_POLLING=true in env vars to enable polling in Replit/local testing.
+# WARNING: Never set this while Railway is also polling the same token —
+# two simultaneous pollers cause Telegram 409 Conflict errors.
+ALLOW_POLLING: bool = IS_RAILWAY or os.getenv("ALLOW_POLLING", "").lower() == "true"
 
 # ── Backward-compatibility alias ──────────────────────────────────────────────
 # services/admin_manager.py and any future modules may reference OWNER_USER_ID.

@@ -111,8 +111,13 @@ _SEPARATOR = "=" * 70
 
 
 def _print_startup_banner() -> None:
-    env_label  = "🚂 RAILWAY (production)" if IS_RAILWAY else "🚫 NON-RAILWAY (polling BLOCKED)"
-    poll_label = "✅ YES — Telegram polling active" if IS_RAILWAY else "❌ NO — Railway env vars not detected"
+    if IS_RAILWAY:
+        env_label  = "🚂 RAILWAY (production)"
+    elif ALLOW_POLLING:
+        env_label  = "🧪 REPLIT / LOCAL (ALLOW_POLLING=true)"
+    else:
+        env_label  = "🚫 NON-RAILWAY (polling BLOCKED)"
+    poll_label = "✅ YES — Telegram polling active" if ALLOW_POLLING else "❌ NO — set ALLOW_POLLING=true to enable"
     log.info(_SEPARATOR)
     log.info("  %s  v%s", BOT_NAME, BOT_VERSION)
     log.info("  Environment : %s", env_label)
@@ -144,8 +149,18 @@ def _bootstrap_onboarding_schema() -> None:
 
 
 async def post_init(application: Application) -> None:
-    """Register bot commands and start background services after bot connects."""
+    """Register bot commands, log startup info, and start background services after bot connects."""
     from config.settings import ADMIN_USER_ID
+
+    bot_info = await application.bot.get_me()
+    total_handlers = sum(len(h) for h in application.handlers.values())
+    log.info(_SEPARATOR)
+    log.info("  ✅ BOT STARTED SUCCESSFULLY")
+    log.info("  Bot username : @%s (ID: %s)", bot_info.username, bot_info.id)
+    log.info("  Version      : %s", BOT_VERSION)
+    log.info("  Handlers     : %d registered across %d group(s)",
+             total_handlers, len(application.handlers))
+    log.info(_SEPARATOR)
 
     # ── Public commands — visible to ALL users ────────────────────────────────
     public_commands = [
@@ -239,7 +254,7 @@ async def post_init(application: Application) -> None:
         except Exception as exc:
             log.warning("Could not set admin-scoped commands: %s", exc)
 
-    log.info("Bot commands registered (public=%d, admin=%d).",
+    log.info("  Commands     : public=%d, admin=%d",
              len(public_commands), len(admin_commands))
     await queue_manager.start()
     mark_ready()
@@ -506,19 +521,18 @@ def build_app() -> Application:
 
 def _run_dev_mode() -> None:
     """
-    Non-Railway mode: Flask keep-alive only — Telegram polling is PERMANENTLY BLOCKED.
+    Non-polling mode: Flask keep-alive only — Telegram polling is blocked.
 
-    This is not configurable. There is no override. Only Railway can run the bot.
-    Replit, local machines, CI, VPS, Docker — all blocked by design.
-    This prevents duplicate bot instances and Telegram 409 Conflict errors.
+    To enable polling in Replit or locally, set ALLOW_POLLING=true in env vars.
+    WARNING: Do NOT set ALLOW_POLLING=true while Railway is also running the same
+    token — two pollers will cause Telegram 409 Conflict errors.
     """
     log.info(_SEPARATOR)
-    log.info("  🚫 RAILWAY-ONLY DEPLOYMENT POLICY ENFORCED")
-    log.info("  Telegram polling is BLOCKED — Railway env vars not detected.")
+    log.info("  🚫 POLLING BLOCKED — ALLOW_POLLING is not set.")
     log.info("  This environment is: Replit / Local / CI / Other (not Railway).")
     log.info("  Flask keep-alive will run on port %s (health checks only).", os.getenv("PORT", "5000"))
-    log.info("  To deploy the bot: push to GitHub → Railway auto-deploys.")
-    log.info("  DO NOT attempt to bypass this guard — it protects production.")
+    log.info("  To run the bot here: set ALLOW_POLLING=true in Replit Secrets.")
+    log.info("  WARNING: Stop Railway first to avoid 409 Conflict errors.")
     log.info(_SEPARATOR)
     # Flask is already running (started at top of main())
     mark_ready()
@@ -553,15 +567,16 @@ def main() -> None:
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    # ── Railway-only guard — no override exists ───────────────────────────────
-    # ALLOW_POLLING == IS_RAILWAY (override permanently removed).
-    # Non-Railway environments run Flask keep-alive only and stop here.
-    if not IS_RAILWAY:
+    # ── Polling guard ─────────────────────────────────────────────────────────
+    # ALLOW_POLLING is True when IS_RAILWAY is detected, or ALLOW_POLLING=true
+    # is set explicitly (e.g. Replit testing). Without it, only Flask runs.
+    if not ALLOW_POLLING:
         _run_dev_mode()
         return
 
-    # ── Production startup sequence (Railway) ─────────────────────────────────
-    log.info("Starting production boot sequence…")
+    # ── Startup sequence ──────────────────────────────────────────────────────
+    env_name = "Railway (production)" if IS_RAILWAY else "Replit/local (ALLOW_POLLING=true)"
+    log.info("Starting bot in %s…", env_name)
 
     try:
         bootstrap_schema()

@@ -506,11 +506,15 @@ STRINGS: dict[str, dict[str, str]] = {
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
-def get_string(lang: str, key: str, **kwargs) -> str:
+def get_string(locale: str, key: str, **kwargs) -> str:
     """Get a translated string for the given language and key.
     Priority: locale JSON → STRINGS dict → English fallback.
+
+    Note: the first parameter is named ``locale`` (not ``lang``) so callers
+    can safely pass ``lang=<display_name>`` as a format kwarg without a
+    "multiple values for argument" conflict.
     """
-    lang = lang if lang in ALL_LANGUAGES else DEFAULT_LANGUAGE
+    lang = locale if locale in ALL_LANGUAGES else DEFAULT_LANGUAGE
     # 1. Check locale JSON file first
     json_locale = _load_locale_json(lang)
     template = json_locale.get(key)

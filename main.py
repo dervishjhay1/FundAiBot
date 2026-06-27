@@ -103,6 +103,7 @@ from services.keepalive import start_keepalive, mark_ready
 from services.queue_manager import queue_manager
 from services.database import bootstrap_schema, load_secondary_admins
 from services.vip_scheduler import start_vip_scheduler
+from services.department_registry import bootstrap_departments
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -257,6 +258,14 @@ async def post_init(application: Application) -> None:
     log.info("  Commands     : public=%d, admin=%d",
              len(public_commands), len(admin_commands))
     await queue_manager.start()
+
+    # ── Start all AI departments (TestAudit, Executive Assistant, etc.) ────────
+    try:
+        bootstrap_departments()
+        log.info("✅ AI departments bootstrapped successfully")
+    except Exception as exc:
+        log.error("Failed to bootstrap departments: %s", exc)
+
     mark_ready()
     log.info("Bot fully initialised — polling active.")
 

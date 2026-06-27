@@ -100,6 +100,13 @@ async def channel_command_guard(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Welcome new group members and direct them to the bot + channel."""
+    # Record activity for Community Manager
+    try:
+        from services.community_manager import record_group_activity
+        record_group_activity()
+    except Exception:
+        pass
+
     message = update.message
     if not message or not message.new_chat_members:
         return
@@ -303,6 +310,13 @@ async def spam_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat = update.effective_chat
     if not user or not chat:
         return
+
+    # Record activity for Community Manager (any real group message = activity)
+    try:
+        from services.community_manager import record_group_activity
+        record_group_activity()
+    except Exception:
+        pass
 
     # Always skip bot owners and secondary admins
     if is_admin(user.id):

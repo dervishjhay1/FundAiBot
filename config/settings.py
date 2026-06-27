@@ -102,11 +102,11 @@ DATA_DIR: str = os.path.join(BASE_DIR, "data")
 LOGS_DIR: str = os.path.join(BASE_DIR, "logs")
 
 # ── Onboarding / Community ────────────────────────────────────────────────────
-TELEGRAM_CHANNEL_ID: str   = os.getenv("TELEGRAM_CHANNEL_ID", "")
+TELEGRAM_CHANNEL_ID: str   = os.getenv("TELEGRAM_CHANNEL_ID", "-1003695220825")
 TELEGRAM_CHANNEL_URL: str  = os.getenv("TELEGRAM_CHANNEL_URL", "https://t.me/FundzAiChannel")
 TELEGRAM_CHANNEL_NAME: str = os.getenv("TELEGRAM_CHANNEL_NAME", "FundzAi Channel")
 
-TELEGRAM_GROUP_ID: str     = os.getenv("TELEGRAM_GROUP_ID", "")
+TELEGRAM_GROUP_ID: str     = os.getenv("TELEGRAM_GROUP_ID", "-1004297201446")
 TELEGRAM_GROUP_URL: str    = os.getenv("TELEGRAM_GROUP_URL", "https://t.me/FundzAiGroup")
 TELEGRAM_GROUP_NAME: str   = os.getenv("TELEGRAM_GROUP_NAME", "FundzAi Community")
 

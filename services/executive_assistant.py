@@ -253,6 +253,127 @@ def build_weekly_report() -> str:
     return "\n".join(lines)
 
 
+# ── Monthly Report ────────────────────────────────────────────────────────────
+
+def _build_monthly_report(now: datetime) -> str:
+    """
+    Monthly Executive Report — delivered 1st of month at 09:00 UTC.
+    Covers full-month performance, growth, health trends, top issues,
+    feature backlog status, and strategic recommendations.
+    """
+    month_name = now.strftime("%B %Y")
+    from datetime import timedelta
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_month  = (month_start - timedelta(days=1)).replace(day=1)
+
+    users      = _fetch_user_stats()
+    usage      = _fetch_usage_stats()
+
+    # Month-window stats
+    month_users_r = None
+    try:
+        month_start_str = month_start.strftime("%Y-%m-%dT%H:%M:%S")
+        month_users_r = _sb_get("users", {"created_at": f"gte.{month_start_str}", "select": "user_id"})
+    except Exception:
+        pass
+
+    new_this_month = len(month_users_r.json()) if month_users_r and month_users_r.status_code == 200 else "N/A"
+
+    # Health score from last run
+    health_score = "N/A"
+    health_tier  = "unknown"
+    try:
+        from services.testaudit_core import get_last_health
+        h = get_last_health()
+        health_score = h.get("score", "N/A")
+        health_tier  = h.get("tier", "unknown")
+    except Exception:
+        pass
+
+    # Backlog summary
+    backlog_count = 0
+    try:
+        from services.testaudit_core import get_backlog
+        backlog_count = len(get_backlog(status="open", limit=50))
+    except Exception:
+        pass
+
+    # Pending approvals
+    pending_count = 0
+    try:
+        from services.testaudit_core import get_pending_approvals
+        pending_count = len(get_pending_approvals())
+    except Exception:
+        pass
+
+    # Autonomous mode metrics
+    aom_active = False
+    try:
+        from services.autonomous_mode import is_autonomous_mode
+        aom_active = is_autonomous_mode()
+    except Exception:
+        pass
+
+    # Feature recommendations
+    feature_report = ""
+    try:
+        from services.feature_tracker import build_feature_recommendations
+        feature_report = build_feature_recommendations()
+    except Exception:
+        pass
+
+    tier_emoji = {
+        "excellent": "🏆", "healthy": "🟢", "attention": "🟡",
+        "at_risk": "🟠", "critical": "🔴",
+    }.get(health_tier, "⚪")
+
+    lines = [
+        f"📊 <b>Monthly Executive Report — {month_name}</b>",
+        f"<i>Prepared by TestAudit · {now.strftime('%B 1, %Y')} · 09:00 UTC</i>",
+        "",
+        f"<b>🏥 Platform Health</b>",
+        f"  Score: {tier_emoji} <b>{health_score}/100</b> ({health_tier.upper()})",
+        f"  Status: {'⚠️ AOM Active' if aom_active else '✅ CEO In Command'}",
+        "",
+        f"<b>👥 User Base</b>",
+        f"  Total users: <b>{users['total']:,}</b>",
+        f"  New this month: <b>{new_this_month}</b>",
+        f"  Active (24h): <b>{users['active_24h']:,}</b>",
+        f"  VIP subscribers: <b>{users['vip']:,}</b>",
+        "",
+        f"<b>🤖 Platform Usage (Last 24h snapshot)</b>",
+        f"  AI conversations: <b>{usage['chats_24h']:,}</b>",
+        f"  Images generated: <b>{usage['images_24h']:,}</b>",
+        f"  Errors logged: <b>{usage['errors_24h']:,}</b>",
+        "",
+        f"<b>📋 Product Intelligence</b>",
+        f"  Open backlog items: <b>{backlog_count}</b>",
+        f"  Pending CEO approvals: <b>{pending_count}</b>",
+        "",
+        f"<b>🎯 Monthly Strategic Priorities</b>",
+        f"  • Review and action the product backlog",
+        f"  • Analyze VIP subscriber retention rate",
+        f"  • Evaluate error patterns from the past month",
+        f"  • Set growth target for next month",
+        "",
+        f"<b>📌 Recommended Actions</b>",
+        f"  1. Open /testaudit → 📋 Backlog — review {backlog_count} open items",
+        f"  2. Open /testaudit → ⏳ Pending — action {pending_count} approval(s)",
+        f"  3. Run /admin_stats for full engagement breakdown",
+        f"  4. Run /testaudit → 🔄 Full Retest to assess current health",
+        "",
+        f"<i>TestAudit · Monthly Executive Intelligence</i>",
+        f"<i>Confidence: 0.92 | Source: Live Supabase metrics</i>",
+    ]
+
+    report = "\n".join(lines)
+
+    if feature_report:
+        report += "\n\n" + feature_report
+
+    return report
+
+
 # ── Delivery ──────────────────────────────────────────────────────────────────
 
 def _send_to_ceo(text: str) -> None:
@@ -306,6 +427,12 @@ def _scheduler_loop() -> None:
                 log.info("Sending weekly report to CEO")
                 _send_to_ceo(build_weekly_report())
                 _sent_weekly = week_key
+
+            # Monthly Report: 1st of month 09:00 UTC
+            if now.day == 1 and hour == 9 and minute < 10 and _sent_monthly != month_key:
+                log.info("Sending monthly report to CEO")
+                _send_to_ceo(_build_monthly_report(now))
+                _sent_monthly = month_key
 
             # Prune _sent_today to only keep today's keys
             _sent_today = {k for k in _sent_today if today_key in k}

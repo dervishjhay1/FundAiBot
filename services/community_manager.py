@@ -395,3 +395,47 @@ def start_community_manager() -> None:
 def stop_community_manager() -> None:
     global _running
     _running = False
+
+
+# ── New member welcoming ───────────────────────────────────────────────────────
+
+async def welcome_new_member(bot, member, chat) -> None:
+    """
+    Send a TestAudit-styled welcome for a new group member.
+
+    Called from new_member_handler when a user joins. The bot itself
+    stays silent; this function sends the welcome on behalf of TestAudit
+    so members see the company's Operations Manager — not a raw bot reply.
+    """
+    import html as _html
+
+    try:
+        bot_info  = await bot.get_me()
+        bot_uname = bot_info.username or BOT_NAME
+        name      = _html.escape(member.first_name or "there")
+
+        text = (
+            f"👋 Welcome to the community, <b>{name}!</b>\n\n"
+            f"Great to have you here. This is a space for AI enthusiasts, "
+            f"builders, and curious minds.\n\n"
+            f"💡 Feel free to ask questions, share ideas, and connect with "
+            f"other members. Discussions, feedback, and feature requests "
+            f"are all welcome.\n\n"
+            f"🤖 For personal AI features — chat, image generation, VIP "
+            f"upgrades, and more — open <b>@{bot_uname}</b> in a private "
+            f"conversation.\n\n"
+            f"<i>— TestAudit · Community Operations Manager</i>"
+        )
+
+        await bot.send_message(
+            chat_id=chat.id,
+            text=text,
+            parse_mode="HTML",
+        )
+        log.info(
+            "TestAudit welcomed new member user=%s group=%s",
+            member.id, chat.id,
+        )
+
+    except Exception as exc:
+        log.warning("welcome_new_member: %s", exc)

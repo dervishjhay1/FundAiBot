@@ -2660,6 +2660,13 @@ async def testaudit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.effective_message.reply_text("⛔ Admin only.")
         return
 
+    # CEO Return Report — if CEO has been away for >12h, send a return brief now
+    try:
+        from services.executive_assistant import check_and_send_return_report
+        check_and_send_return_report()
+    except Exception:
+        pass
+
     # Record CEO activity for Autonomous Operations Mode tracking
     try:
         from services.autonomous_mode import record_ceo_activity

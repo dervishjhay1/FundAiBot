@@ -460,3 +460,92 @@ def start_executive_assistant() -> None:
 def stop_executive_assistant() -> None:
     global _running
     _running = False
+
+
+# ── CEO Return Report ──────────────────────────────────────────────────────────
+
+_RETURN_THRESHOLD_HOURS = 12   # send return report if CEO away for more than this
+_last_ceo_seen: float = 0.0    # timestamp of last /testaudit call
+
+
+def build_return_report(absent_seconds: float) -> str:
+    """Build a Return Report summarising what happened during the CEO's absence."""
+    users  = _fetch_user_stats()
+    usage  = _fetch_usage_stats()
+    health = _fetch_health_trend()
+
+    absent_h  = max(1, round(absent_seconds / 3600))
+    score_str = f"{health['latest_score']:.1f}/100" if health["latest_score"] is not None else "N/A"
+    tier_str  = health.get("latest_tier") or "unknown"
+    emoji     = _tier_emoji(tier_str)
+
+    lines = [
+        f"🔔 <b>Executive Return Report</b>",
+        f"<i>You were away for approximately {absent_h} hour{'s' if absent_h != 1 else ''}.</i>",
+        f"<i>TestAudit monitored everything during your absence. Here is the summary.</i>",
+        "",
+        f"<b>🏥 Current Company Health</b>",
+        f"  {emoji} Score: <b>{score_str}</b> ({tier_str})",
+        "",
+        f"<b>👥 User Activity</b>",
+        f"  Total users: <b>{users['total']:,}</b>",
+        f"  Active (24h): <b>{users['active_24h']:,}</b>",
+        f"  New (24h): <b>{users['new_24h']:,}</b>",
+        f"  VIP subscribers: <b>{users['vip']:,}</b>",
+        "",
+        f"<b>📊 Activity During Your Absence (24h window)</b>",
+        f"  AI conversations: <b>{usage['chats_24h']:,}</b>",
+        f"  Images generated: <b>{usage['images_24h']:,}</b>",
+        f"  Errors logged: <b>{usage['errors_24h']:,}</b>",
+        "",
+    ]
+
+    alerts = []
+    if usage["errors_24h"] > 20:
+        alerts.append("⚠️ High error rate detected — run /admin_logs for details")
+    if users["new_24h"] > 0:
+        alerts.append(f"✅ {users['new_24h']} new user(s) joined while you were away")
+    if health["latest_score"] is not None and health["latest_score"] < 55:
+        alerts.append("🔴 Health score below threshold — run /testaudit → Full Retest")
+
+    if alerts:
+        lines.append(f"<b>🔔 Alerts</b>")
+        for alert in alerts:
+            lines.append(f"  {alert}")
+        lines.append("")
+
+    lines += [
+        f"<b>📋 Recommended Actions</b>",
+        f"  • Run /testaudit for a complete system audit",
+        f"  • Run /admin_logs to review any errors",
+        f"  • Run /admin_stats for full engagement metrics",
+        "",
+        f"<i>TestAudit · Executive Return Intelligence</i>",
+        f"<i>Monitoring ran continuously during your absence. Welcome back.</i>",
+    ]
+
+    return "\n".join(lines)
+
+
+def check_and_send_return_report() -> None:
+    """
+    Called when the CEO opens /testaudit.
+    If they have been away for more than _RETURN_THRESHOLD_HOURS, send a
+    Return Report before the full audit loads.
+    Always updates _last_ceo_seen to the current time.
+    """
+    global _last_ceo_seen
+    now = time.time()
+    if _last_ceo_seen > 0:
+        absent_secs = now - _last_ceo_seen
+        if absent_secs >= (_RETURN_THRESHOLD_HOURS * 3600):
+            try:
+                report = build_return_report(absent_secs)
+                _send_to_ceo(report)
+                log.info(
+                    "CEO Return Report sent — absent for %.1fh",
+                    absent_secs / 3600,
+                )
+            except Exception as exc:
+                log.warning("Failed to send CEO return report: %s", exc)
+    _last_ceo_seen = now

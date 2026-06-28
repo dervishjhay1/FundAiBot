@@ -289,13 +289,23 @@ async def group_command_blocker(update: Update, context: ContextTypes.DEFAULT_TY
                 return
         except Exception:
             pass
-    # Silently ignore — no reply to keep group clean
+    # Send polite redirect to private chat — never silently drop the message
     log.debug(
         "Group command blocked for non-admin user=%s cmd=%s chat=%s",
         user.id,
         (update.message.text or "")[:30] if update.message else "?",
         chat.id if chat else "?",
     )
+    try:
+        bot_info  = await context.bot.get_me()
+        bot_uname = bot_info.username or BOT_NAME
+        await update.message.reply_text(
+            f"👋 Personal AI features are available in private chat.\n\n"
+            f"Please message @{bot_uname} directly to use AI chat, image generation, "
+            f"your profile, VIP features, and other personal services.",
+        )
+    except Exception as exc:
+        log.debug("group_command_blocker reply failed: %s", exc)
 
 
 # ── Anti-spam filter ──────────────────────────────────────────────────────────

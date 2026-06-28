@@ -1500,6 +1500,19 @@ def _render_dashboard(audit: dict) -> tuple[str, InlineKeyboardMarkup]:
     ])
     rows.append([
         InlineKeyboardButton("🧠 CEO Advisor",    callback_data="audit:ceo_advisor"),
+        InlineKeyboardButton("🏢 Departments",    callback_data="audit:departments"),
+    ])
+    rows.append([
+        InlineKeyboardButton("📋 Backlog",        callback_data="audit:backlog"),
+        InlineKeyboardButton("👤 Customer Success", callback_data="audit:customer_success"),
+    ])
+    rows.append([
+        InlineKeyboardButton("⏳ Pending Approvals", callback_data="audit:pending_approvals"),
+        InlineKeyboardButton("🧠 Health Score",   callback_data="audit:live_health"),
+    ])
+    rows.append([
+        InlineKeyboardButton("💬 Talk to TestAudit", callback_data="audit:exec_chat"),
+        InlineKeyboardButton("🤖 Auto Mode",         callback_data="audit:autonomous_status"),
     ])
     action_row = [InlineKeyboardButton("🔄 Full Retest", callback_data="audit:retest")]
     if total_f > 0 and not partial:
@@ -1995,6 +2008,13 @@ async def audit_callback(query, context, action: str) -> None:
     """Handle all audit: prefixed callbacks. Called from callbacks.py."""
     bot = context.bot
 
+    # Record CEO activity for Autonomous Operations Mode tracking
+    try:
+        from services.autonomous_mode import record_ceo_activity
+        record_ceo_activity("audit_callback")
+    except Exception:
+        pass
+
     async def _cached_audit() -> dict:
         cached = context.bot_data.get(_CACHE_KEY)
         if cached and not cached.get("partial") and (time.time() - cached["timestamp"]) < _AUDIT_TTL:
@@ -2153,6 +2173,220 @@ async def audit_callback(query, context, action: str) -> None:
         except Exception:
             pass
 
+    # ── Live Health Score (from TestAudit continuous monitor) ─────────────────
+    elif action == "live_health":
+        await query.answer("Fetching live health…")
+        try:
+            from services.testaudit_core import calculate_health_score, get_last_health, predict_risks
+            last = get_last_health()
+            # If last check is stale (> 15 min), run fresh
+            import time as _time
+            last_ts = last.get("checked_at")
+            if not last_ts or (last.get("score", 0) == 0):
+                health = await asyncio.get_running_loop().run_in_executor(
+                    None, calculate_health_score
+                )
+            else:
+                health = last
+                health = await asyncio.get_running_loop().run_in_executor(
+                    None, calculate_health_score
+                )
+
+            score = health.get("score", 0)
+            tier  = health.get("tier", "unknown")
+            breakdown = health.get("breakdown", {})
+            issues    = health.get("issues", [])
+
+            tier_emoji = {"excellent": "🟢", "healthy": "🟢", "attention": "🟡",
+                          "at_risk": "🟠", "critical": "🔴"}.get(tier, "⚪")
+
+            lines = [
+                f"🧠 <b>Live Company Health Score</b>",
+                f"",
+                f"{tier_emoji} <b>{score:.1f}/100</b>  —  {tier.upper()}",
+                f"",
+                f"<b>Dimension Breakdown:</b>",
+            ]
+            dim_labels = {
+                "bot_core":     "🤖 Bot Core",
+                "ai_providers": "🧠 AI Providers",
+                "database":     "🗄️ Database",
+                "active_users": "👥 Active Users",
+                "error_rate":   "📉 Error Rate",
+            }
+            for dim, info in breakdown.items():
+                s = info.get("score", 0)
+                m = info.get("max", 20)
+                bar = "█" * int(s / m * 10) + "░" * (10 - int(s / m * 10))
+                lines.append(f"  {dim_labels.get(dim, dim)}: {s:.0f}/{m}  [{bar}]")
+
+            if issues:
+                lines.append("")
+                lines.append("<b>⚠️ Issues Detected:</b>")
+                for issue in issues[:5]:
+                    lines.append(f"  • {issue}")
+
+            risks = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: predict_risks(health)
+            )
+            if risks:
+                lines.append("")
+                lines.append("<b>🔮 Predicted Risks:</b>")
+                for r in risks[:3]:
+                    sev = r.get("severity", "").upper()
+                    lines.append(f"  [{sev}] {r.get('description', '')}")
+
+            lines.append("")
+            lines.append(f"<i>Calculated by TestAudit · Continuous Intelligence</i>")
+
+            text = "\n".join(lines)
+            if len(text) > 4000:
+                text = text[:3900] + "\n…<i>(truncated)</i>"
+            kbd = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh", callback_data="audit:live_health"),
+                InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+            ]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
+
+    # ── AI Departments status ─────────────────────────────────────────────────
+    elif action == "departments":
+        await query.answer()
+        try:
+            from services.department_registry import get_all_status
+            depts = await asyncio.get_running_loop().run_in_executor(None, get_all_status)
+            lines = [
+                "🏢 <b>AI Department Registry</b>",
+                f"<i>{len(depts)} active departments</i>",
+                "",
+            ]
+            for d in depts:
+                healthy   = "🟢" if d.get("healthy") else "🔴"
+                started   = d.get("started_at", "")[:16].replace("T", " ") + " UTC" if d.get("started_at") else "not started"
+                lines.append(f"{healthy} <b>{d['name']}</b>")
+                lines.append(f"   Role: {d.get('role', 'N/A')}")
+                lines.append(f"   Started: {started}")
+                lines.append("")
+            text = "\n".join(lines) or "No departments registered."
+            if len(text) > 4000:
+                text = text[:3900] + "\n…"
+            kbd = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh", callback_data="audit:departments"),
+                InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+            ]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
+
+    # ── Product Improvement Backlog ────────────────────────────────────────────
+    elif action == "backlog" or action.startswith("backlog:"):
+        await query.answer()
+        try:
+            status_filter = "open"
+            if ":" in action:
+                status_filter = action.split(":", 1)[1]
+            from services.testaudit_core import get_backlog
+            items = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: get_backlog(status=status_filter, limit=15)
+            )
+            priority_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+            lines = [
+                f"📋 <b>Product Improvement Backlog</b>",
+                f"<i>{len(items)} {status_filter} items</i>",
+                "",
+            ]
+            if not items:
+                lines.append("✅ Backlog is empty! All clear.")
+            for item in items[:10]:
+                pri  = item.get("priority", "medium")
+                cat  = item.get("category", "feature")
+                conf = item.get("confidence", 0.8)
+                src  = item.get("source", "testaudit")
+                lines.append(
+                    f"{priority_emoji.get(pri, '⚪')} <b>{item['title']}</b>"
+                )
+                lines.append(f"   [{cat.upper()}] · {pri} priority · {conf:.0%} confidence · via {src}")
+                if item.get("description"):
+                    lines.append(f"   {item['description'][:80]}")
+                lines.append("")
+
+            text = "\n".join(lines)
+            if len(text) > 4000:
+                text = text[:3900] + "\n…"
+            kbd = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📂 Open", callback_data="audit:backlog:open"),
+                    InlineKeyboardButton("✅ Done",  callback_data="audit:backlog:done"),
+                ],
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="audit:backlog"),
+                    InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+                ],
+            ])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
+
+    # ── Customer Success Report ───────────────────────────────────────────────
+    elif action == "customer_success":
+        await query.answer("Analyzing user engagement…")
+        try:
+            from services.customer_success import build_customer_success_report
+            text = await asyncio.get_running_loop().run_in_executor(
+                None, build_customer_success_report
+            )
+            if len(text) > 4000:
+                text = text[:3900] + "\n…<i>(truncated)</i>"
+            kbd = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh",  callback_data="audit:customer_success"),
+                InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+            ]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
+
+    # ── Pending CEO Approvals ─────────────────────────────────────────────────
+    elif action == "pending_approvals":
+        await query.answer()
+        try:
+            from services.testaudit_core import get_pending_approvals
+            items = await asyncio.get_running_loop().run_in_executor(
+                None, get_pending_approvals
+            )
+            risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}
+            lines = [
+                "⏳ <b>Pending CEO Approvals</b>",
+                f"<i>{len(items)} item(s) awaiting your decision</i>",
+                "",
+            ]
+            if not items:
+                lines.append("✅ No pending approvals — all clear.")
+            for item in items[:8]:
+                risk = item.get("risk_level", "medium")
+                conf = item.get("confidence", 0)
+                ts   = (item.get("created_at") or "")[:16].replace("T", " ")
+                lines.append(
+                    f"{risk_emoji.get(risk, '⚪')} <b>{item['title']}</b>"
+                )
+                lines.append(f"   Type: {item.get('action_type', '?')} · Risk: {risk} · {conf:.0%} confidence")
+                lines.append(f"   {ts} UTC")
+                if item.get("description"):
+                    lines.append(f"   {item['description'][:80]}")
+                lines.append("")
+
+            lines.append("<i>Use /admin to take action on pending items.</i>")
+            text = "\n".join(lines)
+            if len(text) > 4000:
+                text = text[:3900] + "\n…"
+            kbd = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh",  callback_data="audit:pending_approvals"),
+                InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+            ]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
+
     # ── Broadcast warning (admin-approved) ────────────────────────────────────
     elif action == "broadcast_warn":
         await query.answer()
@@ -2214,6 +2448,143 @@ async def audit_callback(query, context, action: str) -> None:
             )
         except Exception:
             pass
+
+    # ── Executive Chat (Talk to TestAudit) ───────────────────────────────────
+    elif action == "exec_chat" or action.startswith("exec_chat:"):
+        await query.answer()
+        if action == "exec_chat":
+            # Show the Executive Chat landing page
+            text = (
+                "💬 <b>Executive Chat — Talk to TestAudit</b>\n\n"
+                "Ask TestAudit anything about the company and receive an AI-powered, "
+                "data-driven answer based on <b>live metrics</b>.\n\n"
+                "<b>Example questions:</b>\n"
+                "• How is the company today?\n"
+                "• Why are users leaving?\n"
+                "• What should we build next?\n"
+                "• What happened while I was away?\n"
+                "• Give me a full company status\n"
+                "• What's the biggest problem right now?\n\n"
+                "<i>Reply to this message with your question, or tap a preset below.</i>"
+            )
+            kbd = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "📊 How is company today?",
+                        callback_data="audit:exec_chat:How is the company today?",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⚠️ Biggest problem?",
+                        callback_data="audit:exec_chat:What is the biggest problem right now?",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🚀 What to build next?",
+                        callback_data="audit:exec_chat:Which feature should we build next?",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔄 Full status report",
+                        callback_data="audit:exec_chat:Give me a full company status report",
+                    ),
+                ],
+                [InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard")],
+            ])
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+            except Exception:
+                pass
+        else:
+            # A preset question was selected
+            question = action.split(":", 1)[1] if ":" in action else ""
+            if not question:
+                await query.answer("Invalid question.", show_alert=True)
+                return
+            await query.answer("🧠 TestAudit is thinking…")
+            try:
+                from services.executive_chat import ask_testaudit
+                response = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: ask_testaudit(question)
+                )
+                if len(response) > 4000:
+                    response = response[:3900] + "\n…<i>(truncated)</i>"
+                kbd = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("💬 Ask another", callback_data="audit:exec_chat"),
+                        InlineKeyboardButton("« Dashboard",    callback_data="audit:dashboard"),
+                    ],
+                ])
+                await query.edit_message_text(response, parse_mode="HTML", reply_markup=kbd)
+            except Exception as exc:
+                await query.answer(f"Error: {exc}", show_alert=True)
+
+    # ── Autonomous Operations Mode Status ─────────────────────────────────────
+    elif action == "autonomous_status":
+        await query.answer()
+        try:
+            from services.autonomous_mode import get_aom_status, CEO_INACTIVE_THRESHOLD_DAYS
+            status = await asyncio.get_running_loop().run_in_executor(
+                None, get_aom_status
+            )
+            aom_active = status["autonomous_mode"]
+            inactive_d = status["ceo_inactive_days"]
+            threshold  = status["threshold_days"]
+            threshold_pct = status["threshold_pct"]
+            ea_taken   = status["emergency_actions_taken"]
+
+            # Progress bar toward AOM activation
+            filled = int(threshold_pct / 10)
+            bar    = "█" * filled + "░" * (10 - filled)
+
+            tier_label = "🤖 AUTONOMOUS MODE" if aom_active else "✅ CEO In Command"
+            tier_note  = (
+                "All operations running autonomously. Emergency authority active."
+                if aom_active
+                else f"You need to be inactive {threshold} days to trigger Autonomous Mode."
+            )
+
+            lines = [
+                "🤖 <b>Autonomous Operations Mode</b>",
+                "",
+                f"<b>Status:</b> {tier_label}",
+                f"<i>{tier_note}</i>",
+                "",
+                f"<b>CEO Activity</b>",
+                f"  Last active: <b>{inactive_d:.1f} days ago</b>",
+                f"  Threshold:   <b>{threshold} days</b>",
+                f"  Progress:    [{bar}] {threshold_pct:.0f}%",
+                "",
+                f"<b>Emergency Actions Taken:</b> {ea_taken}",
+            ]
+
+            if status.get("aom_started_at"):
+                lines.append(f"<b>AOM Started:</b> {status['aom_started_at'][:16].replace('T', ' ')} UTC")
+
+            lines.extend([
+                "",
+                "<b>ℹ️ How it works:</b>",
+                "• TestAudit monitors every hour",
+                f"• After {threshold} days inactive → Autonomous Mode activates",
+                "• All daily operations continue without interruption",
+                "• Emergency actions require critical evidence + pre-approval",
+                "• CEO notified immediately on every emergency action",
+                "• Full Recovery Report delivered when you return",
+                "",
+                "<i>TestAudit · Autonomous Operations Module</i>",
+            ])
+
+            text = "\n".join(lines)
+            kbd  = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh",   callback_data="audit:autonomous_status"),
+                InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+            ]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+        except Exception as exc:
+            await query.answer(f"Error: {exc}", show_alert=True)
 
     else:
         await query.answer()
@@ -2288,6 +2659,13 @@ async def testaudit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not user or not is_admin(user.id):
         await update.effective_message.reply_text("⛔ Admin only.")
         return
+
+    # Record CEO activity for Autonomous Operations Mode tracking
+    try:
+        from services.autonomous_mode import record_ceo_activity
+        record_ceo_activity("/testaudit")
+    except Exception:
+        pass
 
     # Phase 1: show quick dashboard immediately
     msg = await update.effective_message.reply_text(

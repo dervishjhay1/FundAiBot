@@ -15,11 +15,10 @@ It integrates naturally with the existing group handlers.
 
 from __future__ import annotations
 
-import json
 import random
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import requests
 
@@ -32,23 +31,38 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── Configuration — discussion topics ────────────────────────────────────────
 
 _INACTIVITY_THRESHOLD_MINS = 60    # trigger discussion after 60 min of silence
 _MIN_POST_COOLDOWN_MINS    = 45    # never post more often than this
 _MAX_POSTS_PER_DAY         = 8     # hard daily cap to avoid spam
-_CHECK_INTERVAL_SECS       = 300   # check activity every 5 minutes
+_CHECK_INTERVAL_SECS       = 300   # how often to run the inactivity check (5 min)
+
+# ── Configuration — smart reply ───────────────────────────────────────────────
+
+_REPLY_DELAY_SECS   = 150   # wait ~2.5 min before stepping in (give humans priority)
+_MAX_REPLIES_PER_HR = 4     # hard cap: TestAudit sends at most 4 AI replies per hour
+_MAX_PENDING_AGE    = 600   # ignore messages older than 10 min (too stale to reply)
+_REPLY_CHECK_SECS   = 30    # check for unanswered messages every 30 seconds
 
 _running: bool = False
 _thread:  threading.Thread | None = None
 
-# In-memory state
-_last_group_activity:  float = time.time()   # timestamp of last observed group message
-_last_community_post:  float = 0.0           # timestamp of last community manager post
+# ── In-memory state — discussion topics ──────────────────────────────────────
+
+_last_group_activity:  float = time.time()
+_last_community_post:  float = 0.0
 _posts_today:          int   = 0
 _posts_today_date:     str   = ""
-_recent_topics:        list[str] = []        # avoid repeating topics
+_recent_topics:        list[str] = []
 _MAX_RECENT_TOPICS = 20
+
+# ── In-memory state — smart reply ────────────────────────────────────────────
+
+# {message_id: {"text": str, "user_id": int, "ts": float, "replied": bool}}
+_pending_messages: dict[int, dict] = {}
+_pending_lock = threading.Lock()
+_replies_this_hour: list[float] = []   # timestamps of AI replies sent (rate limiting)
 
 # ── Discussion topic templates ────────────────────────────────────────────────
 
@@ -196,9 +210,54 @@ _STATIC_TOPICS: list[dict] = [
 # ── Activity tracking ─────────────────────────────────────────────────────────
 
 def record_group_activity() -> None:
-    """Call this whenever a real message is sent in the group. Updates activity timestamp."""
+    """
+    Update the group activity timestamp.
+    Kept for backward compatibility — call record_group_message() when
+    message details are available to also enable smart replies.
+    """
     global _last_group_activity
     _last_group_activity = time.time()
+
+
+def record_group_message(
+    message_id: int,
+    user_id: int,
+    text: str,
+    reply_to_id: int | None = None,
+) -> None:
+    """
+    Track an incoming group message for smart reply monitoring.
+    Also updates the general activity timestamp.
+
+    Call this from group handlers for every non-spam, non-command message.
+    If the message is a reply (reply_to_id set), the original message is
+    marked as answered so TestAudit will not step in.
+    """
+    global _last_group_activity
+    _last_group_activity = time.time()
+
+    with _pending_lock:
+        # If this is a human reply to a tracked message, mark it answered
+        if reply_to_id and reply_to_id in _pending_messages:
+            _pending_messages[reply_to_id]["replied"] = True
+            log.debug(
+                "community_manager: msg %d marked replied (human answered %d)",
+                reply_to_id, message_id,
+            )
+
+        # Track this message as a candidate for TestAudit smart reply
+        _pending_messages[message_id] = {
+            "text":    text,
+            "user_id": user_id,
+            "ts":      time.time(),
+            "replied": False,
+        }
+
+        # Purge messages older than 15 min to keep memory bounded
+        cutoff = time.time() - 900
+        stale = [mid for mid, m in _pending_messages.items() if m["ts"] < cutoff]
+        for mid in stale:
+            del _pending_messages[mid]
 
 
 def _is_group_inactive() -> bool:
@@ -286,6 +345,162 @@ def _try_ai_topic() -> str | None:
     return None
 
 
+# ── Smart reply helpers ───────────────────────────────────────────────────────
+
+def _should_reply_now() -> bool:
+    """Rate limit: return True only if we're under _MAX_REPLIES_PER_HR."""
+    global _replies_this_hour
+    now = time.time()
+    _replies_this_hour = [t for t in _replies_this_hour if now - t < 3600]
+    return len(_replies_this_hour) < _MAX_REPLIES_PER_HR
+
+
+def _generate_smart_reply(message_text: str) -> str | None:
+    """
+    Generate a helpful, context-aware reply to an unanswered group message.
+    Only called when no human has replied after _REPLY_DELAY_SECS.
+    Returns None if AI is unavailable or the message doesn't warrant a reply.
+    """
+    if not OPENROUTER_API_KEY:
+        return None
+    try:
+        r = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"You are TestAudit, the Community Operations Manager of {BOT_NAME}, "
+                            "an AI-powered Telegram platform. "
+                            "A community member posted a message that no one has replied to yet. "
+                            "Your job: provide a warm, helpful, professional response.\n\n"
+                            "Rules:\n"
+                            "- Keep replies concise: 2-4 sentences max\n"
+                            "- Sound like a real human community manager — not a robot\n"
+                            "- If it's a feature/bot question → answer accurately and guide to private chat for personal use\n"
+                            "- If it's a general AI question → give a genuinely useful answer\n"
+                            "- If it's casual conversation or a statement → engage naturally and warmly\n"
+                            "- If the intent is unclear → ask a friendly clarifying question\n"
+                            "- Never reveal you are automated or say 'As an AI'\n"
+                            "- Do NOT add any signature or sign-off\n"
+                            "- Use emojis only when they feel natural, not decoratively\n"
+                            "- If the message is a greeting or spam, return exactly: SKIP"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Community message: {message_text[:600]}",
+                    },
+                ],
+                "max_tokens": 160,
+                "temperature": 0.72,
+            },
+            timeout=18,
+        )
+        if r.status_code == 200:
+            reply = r.json()["choices"][0]["message"]["content"].strip()
+            if reply and reply != "SKIP" and len(reply) > 10:
+                return reply
+    except Exception as exc:
+        log.debug("community_manager._generate_smart_reply: %s", exc)
+    return None
+
+
+def _post_reply_to_group(text: str, reply_to_message_id: int) -> bool:
+    """Send a reply directed at a specific message in the group."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_GROUP_ID:
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id":             TELEGRAM_GROUP_ID,
+                "text":                text,
+                "parse_mode":          "HTML",
+                "reply_to_message_id": reply_to_message_id,
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            log.info(
+                "TestAudit replied to unanswered message %d in group",
+                reply_to_message_id,
+            )
+            return True
+        log.warning(
+            "community_manager reply HTTP %d: %s",
+            r.status_code, r.text[:80],
+        )
+        return False
+    except Exception as exc:
+        log.warning("community_manager._post_reply_to_group: %s", exc)
+        return False
+
+
+def _check_unanswered_messages() -> None:
+    """
+    Human-first smart reply logic:
+    1. Find messages that have been unanswered for _REPLY_DELAY_SECS.
+    2. Skip anything already replied by a human, too old, or rate-limited.
+    3. Generate an AI reply and post it as a threaded reply.
+
+    Processes at most ONE message per 30-second cycle to avoid flooding.
+    """
+    if not _should_reply_now():
+        return
+
+    now = time.time()
+    candidate: tuple[int, str] | None = None
+
+    with _pending_lock:
+        for mid, msg in sorted(_pending_messages.items(), key=lambda x: x[1]["ts"]):
+            age = now - msg["ts"]
+            if msg["replied"]:
+                continue
+            if age < _REPLY_DELAY_SECS:
+                continue           # too soon — give humans a chance first
+            if age > _MAX_PENDING_AGE:
+                msg["replied"] = True  # too old — mark and skip
+                continue
+            # Found a candidate — take the oldest unanswered message
+            candidate = (mid, msg["text"])
+            msg["replied"] = True  # optimistic mark so we never double-process
+            break
+
+    if not candidate:
+        return
+
+    mid, text = candidate
+    if not _should_reply_now():
+        return
+
+    reply = _generate_smart_reply(text)
+    if not reply:
+        return
+
+    success = _post_reply_to_group(reply, mid)
+    if success:
+        _replies_this_hour.append(time.time())
+        try:
+            from services.testaudit_core import log_memory
+            log_memory(
+                "action_taken",
+                "TestAudit replied to unanswered community message",
+                detail={"message_id": mid, "reply_chars": len(reply)},
+                category="community",
+                confidence=0.88,
+                outcome="resolved",
+            )
+        except Exception:
+            pass
+
+
 # ── Post to group ─────────────────────────────────────────────────────────────
 
 def _post_to_group(text: str) -> bool:
@@ -362,18 +577,34 @@ def _trigger_discussion() -> None:
 # ── Monitor loop ──────────────────────────────────────────────────────────────
 
 def _monitor_loop() -> None:
-    log.info("👥 Community Manager started — monitoring group activity")
+    log.info(
+        "👥 Community Manager started — monitoring group activity + smart replies"
+    )
     time.sleep(120)  # let bot fully start
+
+    _last_inactivity_check: float = 0.0
 
     while _running:
         try:
-            if TELEGRAM_GROUP_ID and _is_group_inactive() and _can_post():
-                log.info("Community Manager: group inactive — triggering discussion")
-                _trigger_discussion()
+            # ── Smart reply: check every 30 seconds for unanswered messages ──
+            # Human-first: only steps in after _REPLY_DELAY_SECS with no human reply
+            if TELEGRAM_GROUP_ID:
+                _check_unanswered_messages()
+
+            # ── Discussion topic: check every _CHECK_INTERVAL_SECS (5 min) ──
+            # Posts a fresh topic only when the group has been genuinely quiet
+            now = time.time()
+            if now - _last_inactivity_check >= _CHECK_INTERVAL_SECS:
+                _last_inactivity_check = now
+                if TELEGRAM_GROUP_ID and _is_group_inactive() and _can_post():
+                    log.info("Community Manager: group inactive — triggering discussion")
+                    _trigger_discussion()
+
         except Exception as exc:
             log.error("community_manager monitor error: %s", exc)
 
-        for _ in range(_CHECK_INTERVAL_SECS):
+        # Sleep in 1-second ticks so the thread responds quickly to shutdown
+        for _ in range(_REPLY_CHECK_SECS):
             if not _running:
                 break
             time.sleep(1)

@@ -413,30 +413,22 @@ def _generate_smart_reply(message_text: str) -> str | None:
 
 
 def _post_reply_to_group(text: str, reply_to_message_id: int) -> bool:
-    """Send a reply directed at a specific message in the group."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_GROUP_ID:
+    """
+    Send a threaded reply to a specific message in the community group.
+    Uses services.messaging.send_group_message() — routed to GROUP only.
+    NEVER forwards this to the channel or any private chat.
+    """
+    if not TELEGRAM_GROUP_ID:
         return False
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id":             TELEGRAM_GROUP_ID,
-                "text":                text,
-                "parse_mode":          "HTML",
-                "reply_to_message_id": reply_to_message_id,
-            },
-            timeout=10,
-        )
-        if r.status_code == 200:
+        from services.messaging import send_group_message
+        result = send_group_message(text, reply_to_message_id=reply_to_message_id)
+        if result:
             log.info(
                 "TestAudit replied to unanswered message %d in group",
                 reply_to_message_id,
             )
             return True
-        log.warning(
-            "community_manager reply HTTP %d: %s",
-            r.status_code, r.text[:80],
-        )
         return False
     except Exception as exc:
         log.warning("community_manager._post_reply_to_group: %s", exc)
@@ -504,24 +496,20 @@ def _check_unanswered_messages() -> None:
 # ── Post to group ─────────────────────────────────────────────────────────────
 
 def _post_to_group(text: str) -> bool:
-    """Send a message to the Telegram group. Returns True on success."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_GROUP_ID:
-        log.debug("community_manager: no token or group_id configured")
+    """
+    Send a message EXCLUSIVELY to the community group. Returns True on success.
+    Uses services.messaging.send_group_message() — routed to GROUP only.
+    This function MUST NEVER send to the channel or any private chat.
+    """
+    if not TELEGRAM_GROUP_ID:
+        log.debug("community_manager: TELEGRAM_GROUP_ID not configured")
         return False
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id":    TELEGRAM_GROUP_ID,
-                "text":       text,
-                "parse_mode": "HTML",
-            },
-            timeout=10,
-        )
-        if r.status_code == 200:
+        from services.messaging import send_group_message
+        result = send_group_message(text)
+        if result:
             log.info("Community Manager posted discussion topic to group")
             return True
-        log.warning("community_manager post HTTP %d: %s", r.status_code, r.text[:80])
         return False
     except Exception as exc:
         log.warning("community_manager._post_to_group: %s", exc)

@@ -980,3 +980,93 @@ async def admin_dm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.effective_message.reply_text("❌ Invalid user ID.")
     except Exception as exc:
         await update.effective_message.reply_text(f"❌ Failed: {html.escape(str(exc))}")
+
+
+# ── /verify_routing ────────────────────────────────────────────────────────────
+
+@admin_only
+async def admin_verify_routing_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/verify_routing — Live check that channel and group IDs are correctly isolated."""
+    await update.effective_message.reply_text(
+        "🔍 <b>Running routing verification…</b>\n"
+        "<i>Checking Telegram API for both chat IDs…</i>",
+        parse_mode="HTML",
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        from services.messaging import verify_routing
+        result = await loop.run_in_executor(None, verify_routing)
+    except Exception as exc:
+        await update.effective_message.reply_text(
+            f"❌ Verification failed with an unexpected error:\n<code>{html.escape(str(exc))}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    ok             = result.get("ok", False)
+    issues         = result.get("issues", [])
+    warnings       = result.get("warnings", [])
+    ids_different  = result.get("ids_different", False)
+    channel_type   = result.get("channel_type", "?")
+    group_type     = result.get("group_type", "?")
+    channel_id     = result.get("channel_id", "?")
+    group_id       = result.get("group_id", "?")
+    disc_linked    = result.get("discussion_linked", False)
+
+    # Status line
+    if ok:
+        header = "✅ <b>All routing checks PASSED</b>"
+        header += "\nChannel and group are correctly isolated — no cross-posting possible from code."
+    else:
+        header = "❌ <b>Routing issues detected</b>"
+
+    # Summary table
+    check_ids   = "✅" if ids_different    else "❌ SAME ID!"
+    check_chan  = "✅" if channel_type == "channel"              else f"❌ type='{channel_type}'"
+    check_grp   = "✅" if group_type in ("group", "supergroup")  else f"❌ type='{group_type}'"
+    check_disc  = "❌ LINKED — Telegram forwards channel posts to group!" if disc_linked else "✅ Not linked"
+
+    table = (
+        f"\n\n<b>Checks:</b>\n"
+        f"  IDs different?       {check_ids}\n"
+        f"  Channel type?        {check_chan}\n"
+        f"  Group type?          {check_grp}\n"
+        f"  Discussion Group?    {check_disc}\n\n"
+        f"<b>Configured IDs:</b>\n"
+        f"  TELEGRAM_CHANNEL_ID = <code>{html.escape(str(channel_id))}</code>\n"
+        f"  TELEGRAM_GROUP_ID   = <code>{html.escape(str(group_id))}</code>"
+    )
+
+    # Issues (if any)
+    issue_text = ""
+    if issues:
+        formatted = "\n".join(f"  • {html.escape(i)}" for i in issues)
+        issue_text = f"\n\n<b>🚨 Issues to fix:</b>\n{formatted}"
+
+    # Warnings (if any)
+    warn_text = ""
+    if warnings:
+        formatted = "\n".join(f"  • {html.escape(w)}" for w in warnings)
+        warn_text = f"\n\n<b>⚠️ Warnings:</b>\n{formatted}"
+
+    # Discussion Group fix instructions
+    disc_fix = ""
+    if disc_linked:
+        disc_fix = (
+            "\n\n<b>📋 How to fix Discussion Group cross-posting:</b>\n"
+            "1. Open your channel in Telegram\n"
+            "2. Tap the channel name → <b>Edit</b>\n"
+            "3. Scroll down to <b>Discussion</b>\n"
+            "4. Tap the linked group → <b>Remove</b> (unlink it)\n"
+            "5. Save — channel posts will no longer appear in the group.\n\n"
+            "<i>This is a Telegram platform feature — it cannot be disabled from bot code alone.</i>"
+        )
+
+    full_text = header + table + issue_text + warn_text + disc_fix
+    # Telegram message limit
+    if len(full_text) > 4096:
+        full_text = full_text[:4090] + "…"
+
+    await update.effective_message.reply_text(full_text, parse_mode="HTML")
+    log.info("verify_routing run by admin %s — ok=%s", update.effective_user.id, ok)

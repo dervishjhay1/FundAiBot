@@ -160,13 +160,28 @@ async def group_ai_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def mention_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     @mention in groups — bot stays completely silent.
-    Recording group activity for CommunityManager is the only action.
-    All AI features are available exclusively in private chat.
+    Records the message for smart reply monitoring so TestAudit can
+    assist the member if no human replies within ~2.5 minutes.
     """
-    # Record activity for CommunityManager
+    user    = update.effective_user
+    message = update.message
+    if not user or not message:
+        return
+
     try:
-        from services.community_manager import record_group_activity
-        record_group_activity()
+        from services.community_manager import record_group_message
+        text = message.text or message.caption or ""
+        if text:
+            reply_to_id = (
+                message.reply_to_message.message_id
+                if message.reply_to_message else None
+            )
+            record_group_message(
+                message_id   = message.message_id,
+                user_id      = user.id,
+                text         = text,
+                reply_to_id  = reply_to_id,
+            )
     except Exception:
         pass
     # Bot stays completely silent — no reply to @mentions in groups
@@ -244,6 +259,21 @@ async def spam_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     text = message.text
     if not _SCAM_RE.search(text):
+        # Not spam — track message so TestAudit can assist if no human replies
+        try:
+            from services.community_manager import record_group_message
+            reply_to_id = (
+                message.reply_to_message.message_id
+                if message.reply_to_message else None
+            )
+            record_group_message(
+                message_id  = message.message_id,
+                user_id     = user.id,
+                text        = text,
+                reply_to_id = reply_to_id,
+            )
+        except Exception:
+            pass
         return
 
     # Spam detected — delete silently, no group announcement

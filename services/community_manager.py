@@ -1,738 +1,646 @@
 """
-FundzAiBot — Community Manager (TestAudit role)
+FundzAiBot — TestAudit Community & Content Management Service
 
-Manages the Telegram Group on behalf of the company:
-  • Monitors group activity level
-  • When quiet (few messages in the last N minutes), sends an AI-generated
-    discussion topic related to AI, productivity, FundzAiBot, or technology
-  • Backs off automatically when the community is naturally active
-  • Avoids repetition — tracks recently posted topics
-  • Never spams — enforces a minimum cooldown between posts
+TestAudit is the official Operations Manager of FundzAiBot.
+This service governs how it behaves in each environment.
 
-This is NOT a chatbot. It is a background intelligence service.
-It integrates naturally with the existing group handlers.
+ENVIRONMENT 1 — TELEGRAM GROUP (Community Manager)
+  - Behaves like a human professional community manager
+  - Never like a chatbot; never dumps articles; never dominates
+  - Welcomes members warmly, starts natural discussions, encourages engagement
+  - Smart response: waits 2-3 min, steps in only if unanswered
+
+ENVIRONMENT 2 — TELEGRAM CHANNEL (Communications Manager)
+  - Publishes 15-30 quality posts per day
+  - Multi-draft generation with quality scoring
+  - Diverse content: tutorials, tips, features, stories, polls, announcements
+
+ENVIRONMENT 3 — PRIVATE DM (Executive Assistant / Operations Monitor)
+  - Monitors satisfaction, retention, inactive users, feature adoption
+  - Never spams; all actions are measured and purposeful
 """
 
 from __future__ import annotations
 
 import random
-import threading
 import time
-from collections import deque
 from datetime import datetime, timezone
+from typing import Optional
 
-import requests
-
-from config.settings import (
-    TELEGRAM_BOT_TOKEN, TELEGRAM_GROUP_ID,
-    OPENROUTER_API_KEY, OPENROUTER_MODEL,
-    BOT_NAME,
-)
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# ── Configuration — discussion topics ────────────────────────────────────────
 
-_INACTIVITY_THRESHOLD_MINS = 60    # trigger discussion after 60 min of silence
-_MIN_POST_COOLDOWN_MINS    = 45    # never post more often than this
-_MAX_POSTS_PER_DAY         = 8     # hard daily cap to avoid spam
-_CHECK_INTERVAL_SECS       = 300   # how often to run the inactivity check (5 min)
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP STATE TRACKING
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Configuration — smart reply ───────────────────────────────────────────────
+# { chat_id: { msg_id: { text, user, ts, replied, context } } }
+_PENDING_MESSAGES: dict[int, dict] = {}
 
-_REPLY_DELAY_SECS   = 150   # wait ~2.5 min before stepping in (give humans priority)
-_MAX_REPLIES_PER_HR = 4     # hard cap: TestAudit sends at most 4 AI replies per hour
-_MAX_PENDING_AGE    = 600   # ignore messages older than 10 min (too stale to reply)
-_REPLY_CHECK_SECS   = 30    # check for unanswered messages every 30 seconds
+# Last time TestAudit posted in each group chat
+_LAST_GROUP_POST: dict[int, float] = {}
 
-# Active discussion detection: if this many messages arrive within the window,
-# humans are actively chatting and TestAudit must stay completely silent.
-_ACTIVE_DISCUSSION_MSGS        = 3    # 3+ messages = active discussion in progress
-_ACTIVE_DISCUSSION_WINDOW_SECS = 120  # 2-minute burst window
-_CONTEXT_MESSAGES_FOR_REPLY    = 4    # recent messages to inject as reply context
+# Last time TestAudit sent a proactive engagement message
+_LAST_ENGAGEMENT: dict[int, float] = {}
 
-_running: bool = False
-_thread:  threading.Thread | None = None
+# Conversation activity tracker — { chat_id: last_human_message_ts }
+_LAST_HUMAN_MESSAGE: dict[int, float] = {}
 
-# ── In-memory state — discussion topics ──────────────────────────────────────
+# Minimum gap before TestAudit posts proactively (10 min)
+_PROACTIVE_MIN_GAP = 600
 
-_last_group_activity:  float = time.time()
-_last_community_post:  float = 0.0
-_posts_today:          int   = 0
-_posts_today_date:     str   = ""
-_recent_topics:        list[str] = []
-_MAX_RECENT_TOPICS = 20
+# Gap before smart-reply (after no human response, in seconds)
+_HUMAN_REPLY_WAIT = 150  # 2.5 minutes
 
-# ── In-memory state — smart reply ────────────────────────────────────────────
+# Proactive engagement: min silence before TestAudit initiates (20 min)
+_SILENCE_THRESHOLD = 1200
 
-# {message_id: {"text": str, "user_id": int, "ts": float, "replied": bool}}
-_pending_messages: dict[int, dict] = {}
-_pending_lock = threading.Lock()
-_replies_this_hour: list[float] = []   # timestamps of AI replies sent (rate limiting)
 
-# Chronological conversation context window — last 10 messages in arrival order.
-# Used to inject recent context into smart replies so TestAudit understands
-# the conversation thread before stepping in.
-_recent_message_context: deque = deque(maxlen=10)
+# ══════════════════════════════════════════════════════════════════════════════
+# CHANNEL STATE TRACKING
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Discussion topic templates ────────────────────────────────────────────────
+_CHANNEL_POST_COUNT: dict[str, int] = {}   # "YYYY-MM-DD" → count
+_LAST_CHANNEL_POST: float = 0.0
 
-_TOPIC_CATEGORIES = [
-    "ai_education",
-    "productivity",
-    "fundzaibot_feature",
-    "tech_insight",
-    "community_question",
-]
+# Recent content type history (avoid repeating same type consecutively)
+_RECENT_CONTENT_TYPES: list[str] = []
+_MAX_RECENT_HISTORY = 5
 
-_STATIC_TOPICS: list[dict] = [
-    {
-        "category": "ai_education",
-        "text": (
-            "🧠 <b>AI Thought of the Day</b>\n\n"
-            "Did you know that large language models like GPT-4 and Gemini don't actually "
-            "'know' anything in the human sense? They predict the most statistically likely "
-            "next token based on patterns in training data.\n\n"
-            "This means the quality of your <b>prompt</b> directly determines the quality "
-            "of the response. Better questions → better answers.\n\n"
-            "What's the most useful prompt technique you've discovered? 💬"
-        ),
-    },
-    {
-        "category": "productivity",
-        "text": (
-            "⚡ <b>Productivity Tip</b>\n\n"
-            "Instead of asking an AI 'What should I do?', try giving it context:\n\n"
-            "<code>I'm a [role] working on [problem]. I've already tried [X]. "
-            "What are 3 approaches I haven't considered?</code>\n\n"
-            "Context transforms generic advice into genuinely useful guidance.\n\n"
-            "How do you usually start your AI conversations? 👇"
-        ),
-    },
-    {
-        "category": "fundzaibot_feature",
-        "text": (
-            f"💡 <b>{BOT_NAME} Feature Spotlight</b>\n\n"
-            "Did you know you can switch between 8 different AI personalities using /style?\n\n"
-            "• 🎓 <b>Teacher</b> — explains concepts clearly\n"
-            "• 💼 <b>Professional</b> — formal, business-ready\n"
-            "• 😎 <b>Friend</b> — casual and relaxed\n"
-            "• 🔬 <b>Scientist</b> — analytical and precise\n\n"
-            "Each style changes how the AI thinks and responds. Try /style and see which "
-            "fits your workflow best!\n\n"
-            "Which style do you use most? 🤔"
-        ),
-    },
-    {
-        "category": "tech_insight",
-        "text": (
-            "🔮 <b>The Future of AI Assistants</b>\n\n"
-            "In 2024, we saw AI move from chatbots to agents — AI that can take actions, "
-            "not just answer questions. In 2025, multi-agent systems started coordinating "
-            "complex tasks automatically.\n\n"
-            "By 2026, the most powerful AI tools aren't the ones with the biggest models — "
-            "they're the ones with the smartest workflows.\n\n"
-            "What AI tool has genuinely changed your daily routine? Share below! 👇"
-        ),
-    },
-    {
-        "category": "community_question",
-        "text": (
-            "🌍 <b>Community Poll</b>\n\n"
-            "What do you use AI for most often?\n\n"
-            "💬 Writing & communication\n"
-            "💻 Coding & debugging\n"
-            "📖 Research & summarization\n"
-            "🎨 Creative projects\n"
-            "📊 Data & analysis\n"
-            "🤔 Something else entirely\n\n"
-            "Drop your answer below — curious to know how this community uses AI! 👇"
-        ),
-    },
-    {
-        "category": "ai_education",
-        "text": (
-            "🤖 <b>AI Myth vs Reality</b>\n\n"
-            "<b>Myth:</b> AI will give the same answer to the same question every time.\n"
-            "<b>Reality:</b> Most AI models have a 'temperature' setting that introduces "
-            "controlled randomness. This is why asking the same question twice often gives "
-            "different phrasing, examples, or suggestions.\n\n"
-            "You can use this to your advantage — ask the same question 2-3 times and "
-            "combine the best parts of each response.\n\n"
-            "Have you tried this technique? 🤔"
-        ),
-    },
-    {
-        "category": "productivity",
-        "text": (
-            "📋 <b>The 3-Part Prompt Formula</b>\n\n"
-            "The fastest way to get great AI responses:\n\n"
-            "<b>1. Role</b> — tell the AI who it is\n"
-            "<code>You are an expert marketing copywriter...</code>\n\n"
-            "<b>2. Task</b> — be specific about what you want\n"
-            "<code>Write a 3-sentence product description for...</code>\n\n"
-            "<b>3. Constraint</b> — set boundaries\n"
-            "<code>...in a professional tone, max 50 words.</code>\n\n"
-            "Role + Task + Constraint = consistently excellent results.\n\n"
-            "What's your go-to prompt formula? 👇"
-        ),
-    },
-    {
-        "category": "fundzaibot_feature",
-        "text": (
-            f"📸 <b>{BOT_NAME} Hidden Gem</b>\n\n"
-            "You can send a photo to the bot and it will analyze it using Gemini Vision:\n\n"
-            "• Identify objects, people, scenes\n"
-            "• Describe what's happening in the image\n"
-            "• Answer questions about the photo\n"
-            "• Extract text from images (OCR)\n\n"
-            "Just send any photo to the bot without a command — it works automatically!\n\n"
-            "Try it now and share what you discover 🔍"
-        ),
-    },
-    {
-        "category": "tech_insight",
-        "text": (
-            "🔐 <b>AI & Privacy — What You Should Know</b>\n\n"
-            "When you use AI services, your conversations may be used to train future models "
-            "(depending on the provider and their terms of service).\n\n"
-            "Best practices:\n"
-            "• Never share passwords, API keys, or sensitive personal info with AI\n"
-            "• Use private/incognito mode for sensitive queries where available\n"
-            "• Check the privacy policy of any AI service you rely on\n\n"
-            f"{BOT_NAME} does NOT store your conversations beyond your active session "
-            "(clear with /clear).\n\n"
-            "Have any AI privacy questions? Ask away! 👇"
-        ),
-    },
-    {
-        "category": "community_question",
-        "text": (
-            "🚀 <b>Quick Community Check-in</b>\n\n"
-            "What's one thing you wish AI could do better right now?\n\n"
-            "No wrong answers — every answer helps us understand what the community needs. "
-            "The most requested improvements get added to our development backlog!\n\n"
-            "Drop your answer below 👇"
-        ),
-    },
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP — WELCOME MESSAGES (TestAudit Community Manager persona)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_WELCOME_TEMPLATES = [
+    "Welcome to FundzAiBot, {name}! Great to have you with us. 👋",
+    "Hey {name}! Welcome to the community. Don't be shy — we're a friendly bunch here 😊",
+    "Welcome {name}! 🌟 Glad you found us. Feel free to jump into any conversation!",
+    "Great to have you, {name}! Welcome to FundzAiBot — the best place to explore AI together 🚀",
+    "Welcome aboard, {name}! 👋 Hope you enjoy it here. What brings you to the community?",
+    "Hey {name}, welcome! 🎉 We're happy to have you. If you ever have any questions, just ask!",
+    "Welcome to the family, {name}! 🙌 You joined at a great time.",
+    "{name}, welcome! Always great to see new faces here. 👋",
 ]
 
 
-# ── Activity tracking ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP — TIME-APPROPRIATE GREETINGS
+# ══════════════════════════════════════════════════════════════════════════════
 
-def record_group_activity() -> None:
-    """
-    Update the group activity timestamp.
-    Kept for backward compatibility — call record_group_message() when
-    message details are available to also enable smart replies.
-    """
-    global _last_group_activity
-    _last_group_activity = time.time()
+_MORNING_GREETINGS = [
+    "Good morning everyone 👋\n\nWhat's everyone building today?",
+    "Morning! ☀️\n\nHope everyone's starting the week strong. What's on your plate?",
+    "Good morning, community! 🌅\n\nAnyone trying out anything interesting lately?",
+    "Rise and shine! ☕\n\nWhat's on the agenda today?",
+    "Good morning 👋\n\nLet's make today a productive one. What are you working on?",
+    "Morning everyone! 🌤️\n\nHope the day's off to a great start. What's everyone up to?",
+]
+
+_AFTERNOON_GREETINGS = [
+    "Good afternoon everyone! 🌤️\n\nHow's the day going so far?",
+    "Afternoon! Hope you're having a productive one 💪\n\nAnything interesting happening?",
+    "Hey everyone, hope the afternoon's treating you well! What are you all up to?",
+    "Good afternoon 🙂\n\nMidway through the day — how's it going?",
+]
+
+_EVENING_GREETINGS = [
+    "Good evening! 🌙\n\nWhat did everyone get done today?",
+    "Evening everyone! Hope it was a great day 🌆\n\nAny wins to share?",
+    "Good evening community! 🌇\n\nWinding down or still grinding?",
+    "Evening! 🌙\n\nHow did everyone's day go?",
+]
 
 
-def record_group_message(
-    message_id: int,
-    user_id: int,
-    text: str,
-    reply_to_id: int | None = None,
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP — PROACTIVE ENGAGEMENT PROMPTS
+# These are short, conversational — never long articles
+# ══════════════════════════════════════════════════════════════════════════════
+
+_ENGAGEMENT_PROMPTS = [
+    "The group's been quiet for a bit 😄\n\nWhat's everyone working on this week?",
+    "Quick question for the community:\n\nWhat's the one thing you wish AI could do better right now?",
+    "What are you using FundzAiBot for the most these days? Curious to hear! 🤔",
+    "Who's tried the image generation feature? Would love to hear what you think 🎨",
+    "Community question:\n\nIf you could add one feature to FundzAiBot, what would it be? 🛠️",
+    "Poll time 🗳️\n\nWhat do you use AI for most?\n\n💬 Writing & chat\n🎨 Images\n💻 Coding\n📊 Research\n\nDrop your answer below!",
+    "Genuine question — what's the most useful thing AI has helped you do recently? 🙌",
+    "Happy to help if anyone has questions about FundzAiBot or AI in general! Just ask 👋",
+    "What would you like us to build next? Your feedback genuinely shapes what we work on 🔨",
+    "Anyone try any interesting AI tools recently? Would love to hear recommendations! 🤖",
+    "Quick thought:\n\nThe best AI use cases are usually the boring, repetitive ones — not the flashy stuff.\n\nWhat's yours?",
+    "Hope everyone's having a great week! Any wins to share? Big or small, we love to hear! 🏆",
+    "Anyone got questions about using FundzAiBot? Happy to help anyone who needs it 🙂",
+    "What's one AI tip you'd share with someone just getting started?",
+    "If you've found a good use case for FundzAiBot, share it! Help others get value too 💡",
+]
+
+_SUPPORT_INTERJECTIONS = [
+    "Looks like this one might need a bit more help — let me see what I can add here 🙂\n\n",
+    "Happy to jump in on this one!\n\n",
+    "Let me help with that!\n\n",
+    "Good question — here's what I know:\n\n",
+    "I can help with this one 👋\n\n",
+]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_welcome_message(first_name: str) -> str:
+    template = random.choice(_WELCOME_TEMPLATES)
+    return template.format(name=first_name)
+
+
+def get_time_greeting() -> Optional[str]:
+    hour = datetime.now(timezone.utc).hour
+    if 5 <= hour < 12:
+        return random.choice(_MORNING_GREETINGS)
+    elif 12 <= hour < 17:
+        return random.choice(_AFTERNOON_GREETINGS)
+    elif 17 <= hour < 22:
+        return random.choice(_EVENING_GREETINGS)
+    return None
+
+
+def get_engagement_prompt() -> str:
+    return random.choice(_ENGAGEMENT_PROMPTS)
+
+
+def get_support_interjection() -> str:
+    return random.choice(_SUPPORT_INTERJECTIONS)
+
+
+def record_human_activity(chat_id: int) -> None:
+    """Record that a human just sent a message — resets silence timer."""
+    _LAST_HUMAN_MESSAGE[chat_id] = time.time()
+
+
+def seconds_silent(chat_id: int) -> float:
+    """Return seconds since last human activity in this chat."""
+    last = _LAST_HUMAN_MESSAGE.get(chat_id, 0)
+    if last == 0:
+        return 9999  # Never seen activity
+    return time.time() - last
+
+
+def can_post_in_group(chat_id: int, min_gap: int = 120) -> bool:
+    """Return True if enough time has passed since last TestAudit post."""
+    last = _LAST_GROUP_POST.get(chat_id, 0)
+    return (time.time() - last) >= min_gap
+
+
+def can_engage_proactively(chat_id: int) -> bool:
+    """Return True if conditions are right for proactive engagement."""
+    last_engage = _LAST_ENGAGEMENT.get(chat_id, 0)
+    gap_ok = (time.time() - last_engage) >= _PROACTIVE_MIN_GAP
+    silence_ok = seconds_silent(chat_id) >= _SILENCE_THRESHOLD
+    post_ok = can_post_in_group(chat_id, min_gap=_PROACTIVE_MIN_GAP)
+    return gap_ok and silence_ok and post_ok
+
+
+def record_group_post(chat_id: int) -> None:
+    _LAST_GROUP_POST[chat_id] = time.time()
+
+
+def record_proactive_engagement(chat_id: int) -> None:
+    _LAST_ENGAGEMENT[chat_id] = time.time()
+    _LAST_GROUP_POST[chat_id] = time.time()
+
+
+def register_message(
+    chat_id: int, msg_id: int, text: str, user_name: str
 ) -> None:
+    """Register a new group message for smart-response monitoring."""
+    if chat_id not in _PENDING_MESSAGES:
+        _PENDING_MESSAGES[chat_id] = {}
+
+    _PENDING_MESSAGES[chat_id][msg_id] = {
+        "text": text,
+        "user": user_name,
+        "ts": time.time(),
+        "replied": False,
+    }
+
+    # Clean old entries (older than 15 min)
+    cutoff = time.time() - 900
+    _PENDING_MESSAGES[chat_id] = {
+        mid: m
+        for mid, m in _PENDING_MESSAGES[chat_id].items()
+        if m["ts"] > cutoff
+    }
+
+
+def mark_replied(chat_id: int, reply_to_id: Optional[int] = None) -> None:
+    """Mark a message (or all recent ones) as having received a human reply."""
+    if chat_id not in _PENDING_MESSAGES:
+        return
+    if reply_to_id and reply_to_id in _PENDING_MESSAGES[chat_id]:
+        _PENDING_MESSAGES[chat_id][reply_to_id]["replied"] = True
+    else:
+        # Any new message in an active conversation marks all recent ones as replied
+        cutoff = time.time() - 420  # 7 min window
+        for m in _PENDING_MESSAGES[chat_id].values():
+            if m["ts"] > cutoff:
+                m["replied"] = True
+
+
+def get_unanswered_messages(chat_id: int) -> list[dict]:
+    """Return messages that have waited long enough with no human reply."""
+    if chat_id not in _PENDING_MESSAGES:
+        return []
+    threshold = time.time() - _HUMAN_REPLY_WAIT
+    return [
+        {"id": mid, **m}
+        for mid, m in _PENDING_MESSAGES[chat_id].items()
+        if not m["replied"] and m["ts"] < threshold
+    ]
+
+
+def is_actionable_message(text: str) -> bool:
     """
-    Track an incoming group message for smart reply monitoring.
-    Also updates the general activity timestamp.
-
-    Call this from group handlers for every non-spam, non-command message.
-    If the message is a reply (reply_to_id set), the original message is
-    marked as answered so TestAudit will not step in.
+    Return True if this message looks like it needs a response
+    (question, help request, frustration, etc.)
     """
-    global _last_group_activity
-    _last_group_activity = time.time()
-
-    with _pending_lock:
-        # If this is a human reply to a tracked message, mark it answered
-        if reply_to_id and reply_to_id in _pending_messages:
-            _pending_messages[reply_to_id]["replied"] = True
-            log.debug(
-                "community_manager: msg %d marked replied (human answered %d)",
-                reply_to_id, message_id,
-            )
-
-        # Track this message as a candidate for TestAudit smart reply
-        _pending_messages[message_id] = {
-            "text":    text,
-            "user_id": user_id,
-            "ts":      time.time(),
-            "replied": False,
-        }
-
-        # Also store in chronological context window so smart replies
-        # can understand the conversation thread before responding
-        _recent_message_context.append({
-            "text":    text[:300],
-            "ts":      time.time(),
-            "user_id": user_id,
-        })
-
-        # Purge messages older than 15 min to keep memory bounded
-        cutoff = time.time() - 900
-        stale = [mid for mid, m in _pending_messages.items() if m["ts"] < cutoff]
-        for mid in stale:
-            del _pending_messages[mid]
+    t = text.lower()
+    signals = (
+        "?" in text,
+        any(w in t for w in ("how", "what", "why", "when", "where", "who", "which")),
+        any(w in t for w in ("help", "issue", "problem", "error", "not working", "broken")),
+        any(w in t for w in ("can i", "is it possible", "does it", "will it", "how do i")),
+        any(w in t for w in ("stuck", "confused", "don't understand", "cant", "can't")),
+    )
+    return any(signals)
 
 
-def _is_group_inactive() -> bool:
-    """True if no group activity for _INACTIVITY_THRESHOLD_MINS minutes."""
-    inactive_secs = time.time() - _last_group_activity
-    return inactive_secs >= (_INACTIVITY_THRESHOLD_MINS * 60)
+def build_community_manager_system_prompt() -> str:
+    """Return the system prompt for TestAudit in group Community Manager mode."""
+    return (
+        "You are TestAudit, the Community Manager of FundzAiBot.\n\n"
+        "You are operating inside a Telegram group chat.\n\n"
+        "YOUR ROLE:\n"
+        "- Professional community manager — not a chatbot\n"
+        "- Human-like, warm, and conversational\n"
+        "- Helpful when members have questions or need support\n\n"
+        "RESPONSE RULES:\n"
+        "- Keep responses SHORT (2-4 sentences max for casual, up to 6 for technical help)\n"
+        "- Never dump long articles or tutorials in the group\n"
+        "- Never use excessive markdown or formatting — this is a chat, not a document\n"
+        "- Use emojis naturally, not excessively\n"
+        "- If you don't know something confidently, say so honestly\n"
+        "- Encourage further discussion when appropriate\n"
+        "- Never start your response with 'As an AI' or similar robotic phrases\n"
+        "- Never mention 'language model', 'GPT', 'Claude', or any underlying technology\n"
+        "- You represent FundzAiBot as a team member, not a tool\n\n"
+        "TONE:\n"
+        "Friendly. Warm. Professional but casual. Like a knowledgeable colleague who genuinely cares."
+    )
 
 
-def _is_discussion_active() -> bool:
-    """
-    Returns True if humans are actively chatting (3+ messages in the last 2 minutes).
+# ══════════════════════════════════════════════════════════════════════════════
+# CHANNEL — CONTENT STRATEGY
+# ══════════════════════════════════════════════════════════════════════════════
 
-    When a real discussion is happening, TestAudit stays completely silent —
-    it only steps in when a question is genuinely unanswered and the
-    conversation has clearly paused. This ensures the human-first policy
-    is enforced at the detection level, not just per-message.
-    """
-    now    = time.time()
-    cutoff = now - _ACTIVE_DISCUSSION_WINDOW_SECS
-    with _pending_lock:
-        recent_count = sum(
-            1 for m in _pending_messages.values()
-            if m["ts"] >= cutoff
-        )
-    return recent_count >= _ACTIVE_DISCUSSION_MSGS
+_CONTENT_TYPE_ROTATION = [
+    "productivity_tip",
+    "feature_spotlight",
+    "ai_tutorial",
+    "quick_tip",
+    "fun_fact",
+    "use_case",
+    "faq",
+    "security_tip",
+    "productivity_tip",
+    "feature_spotlight",
+    "ai_tutorial",
+    "success_story",
+    "quick_tip",
+    "fun_fact",
+    "use_case",
+    "productivity_tip",
+    "community_highlight",
+    "feature_spotlight",
+    "faq",
+    "ai_tutorial",
+    "security_tip",
+    "quick_tip",
+    "productivity_tip",
+    "fun_fact",
+    "feature_spotlight",
+    "use_case",
+    "ai_tutorial",
+    "quick_tip",
+    "productivity_tip",
+    "community_highlight",
+]
+
+_CONTENT_TYPE_DESCRIPTIONS = {
+    "ai_tutorial": (
+        "an educational AI tutorial that shows users how to get better results. "
+        "Focus on a specific technique or prompt strategy. Show before/after examples where possible."
+    ),
+    "productivity_tip": (
+        "a practical productivity tip showing how AI saves time on real tasks. "
+        "Be specific — name the task, explain the approach, quantify the time saved if possible."
+    ),
+    "feature_spotlight": (
+        "a feature spotlight for one specific FundzAiBot feature. "
+        "Explain what it does, when to use it, and give a concrete example. "
+        "Features include: /image (AI images), /summarize (document summaries), /translate, "
+        "/analyze (photo analysis), /code (coding help), /style (8 AI personalities), "
+        "/model (switch AI providers), /subscribe (VIP plans), /referral (referral rewards)."
+    ),
+    "security_tip": (
+        "a digital security awareness post relevant to AI and online safety. "
+        "Be practical and specific — what should users do or avoid?"
+    ),
+    "community_highlight": (
+        "a warm, community-celebrating post that makes members feel valued. "
+        "Could highlight community size, member achievements, or appreciation."
+    ),
+    "faq": (
+        "an FAQ post answering one common question about FundzAiBot. "
+        "Questions could include: how it works, privacy, pricing, commands, "
+        "AI models used, daily limits, VIP benefits."
+    ),
+    "fun_fact": (
+        "an interesting and surprising AI or technology fact. "
+        "Make it genuinely fascinating — something people would want to share."
+    ),
+    "quick_tip": (
+        "a very short, immediately actionable tip for using FundzAiBot. "
+        "One tip, clearly explained, with an example. Under 100 words."
+    ),
+    "use_case": (
+        "a real-world use case showing how a specific type of person uses FundzAiBot in their life. "
+        "Be concrete — pick a persona (student, freelancer, business owner, developer, etc.) "
+        "and show exactly how they use it."
+    ),
+    "success_story": (
+        "an inspiring story format about how AI is changing someone's work or life. "
+        "Relatable, concrete, motivating. Could be hypothetical but realistic."
+    ),
+}
+
+# Fallback templates (used when AI is unavailable)
+_FALLBACK_TEMPLATES: dict[str, str] = {
+    "productivity_tip": (
+        "⚡ <b>Productivity Tip</b>\n\n"
+        "Use FundzAiBot to draft your first pass on any written task — "
+        "emails, summaries, reports, social posts.\n\n"
+        "Edit the output to add your voice. You'll finish in a fraction of the time.\n\n"
+        "Start with: <i>\"Draft a professional email to...\"</i>"
+    ),
+    "ai_tutorial": (
+        "📚 <b>AI Tip: Be Specific</b>\n\n"
+        "The more context you give FundzAiBot, the better the response.\n\n"
+        "❌ <i>\"Write about marketing\"</i>\n"
+        "✅ <i>\"Write a 3-paragraph intro about email marketing for small e-commerce businesses\"</i>\n\n"
+        "Specificity = better results. 🎯"
+    ),
+    "feature_spotlight": (
+        "✨ <b>Feature: /summarize</b>\n\n"
+        "Got a long document, article, or report?\n\n"
+        "Use <code>/summarize</code> and paste the text. "
+        "FundzAiBot gives you a clean, concise summary in seconds.\n\n"
+        "Perfect for research, news, and long reports. 📄"
+    ),
+    "fun_fact": (
+        "🤓 <b>AI Fun Fact</b>\n\n"
+        "The first chatbot, ELIZA, was created at MIT in 1966.\n\n"
+        "It had no real intelligence — just clever pattern matching.\n\n"
+        "Compare that to today's AI that can write code, analyze images, "
+        "hold conversations, and more.\n\n"
+        "The pace of progress is extraordinary. 🚀"
+    ),
+    "quick_tip": (
+        "💡 <b>Quick Tip</b>\n\n"
+        "Use <code>/clear</code> in FundzAiBot to reset your conversation memory "
+        "when switching topics.\n\n"
+        "Fresh context = better answers. 🧹"
+    ),
+    "use_case": (
+        "💼 <b>Use Case: Freelancers</b>\n\n"
+        "Freelancers use FundzAiBot to:\n\n"
+        "• Write client proposals\n"
+        "• Draft project updates\n"
+        "• Summarize briefs\n"
+        "• Create invoices and templates\n\n"
+        "All without a copywriter or assistant. 🚀"
+    ),
+    "security_tip": (
+        "🔒 <b>Security Reminder</b>\n\n"
+        "FundzAiBot will <b>never</b> ask for your password, seed phrase, "
+        "or financial credentials.\n\n"
+        "If anyone claims to be FundzAiBot support and asks for this — it's a scam.\n\n"
+        "Stay safe. 🛡️"
+    ),
+    "faq": (
+        "❓ <b>FAQ: How many chats can I have per day?</b>\n\n"
+        "Free users get <b>30 AI chats per day</b>.\n\n"
+        "VIP plans offer more:\n"
+        "⭐ Basic — 100 chats/day\n"
+        "💎 Pro — 300 chats/day\n"
+        "🚀 Elite — Unlimited\n\n"
+        "Use <code>/subscribe</code> to see current plans."
+    ),
+    "community_highlight": (
+        "👥 <b>Community Update</b>\n\n"
+        "The FundzAiBot community keeps growing — thank you all for being part of this! 🙏\n\n"
+        "Every question asked, every feature requested, every piece of feedback "
+        "makes FundzAiBot better.\n\n"
+        "You're not just users — you're co-creators. 💪"
+    ),
+    "success_story": (
+        "🌟 <b>How AI Changed Their Week</b>\n\n"
+        "A freelance writer started using FundzAiBot to draft first drafts.\n\n"
+        "Result: Same quality, half the time. More clients, same deadline pressure.\n\n"
+        "AI doesn't replace the craft — it removes the friction. "
+        "What would you do with twice the time? ⏰"
+    ),
+}
 
 
-def _can_post() -> bool:
-    """True if cooldown passed and daily cap not reached."""
-    global _posts_today, _posts_today_date
-
+def get_channel_post_today() -> int:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if _posts_today_date != today:
-        _posts_today      = 0
-        _posts_today_date = today
-
-    if _posts_today >= _MAX_POSTS_PER_DAY:
-        return False
-
-    cooldown_secs = time.time() - _last_community_post
-    return cooldown_secs >= (_MIN_POST_COOLDOWN_MINS * 60)
+    return _CHANNEL_POST_COUNT.get(today, 0)
 
 
-# ── Topic selection ───────────────────────────────────────────────────────────
-
-def _pick_topic() -> str | None:
-    """Pick a topic that hasn't been used recently."""
-    available = [t for t in _STATIC_TOPICS if t["text"] not in _recent_topics]
-    if not available:
-        # All used — reset and pick any
-        _recent_topics.clear()
-        available = _STATIC_TOPICS
-
-    chosen = random.choice(available)
-    return chosen["text"]
+def record_channel_post() -> None:
+    global _LAST_CHANNEL_POST
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _CHANNEL_POST_COUNT[today] = _CHANNEL_POST_COUNT.get(today, 0) + 1
+    _LAST_CHANNEL_POST = time.time()
 
 
-def _try_ai_topic() -> str | None:
-    """Try to generate a fresh AI-powered discussion topic via OpenRouter."""
-    if not OPENROUTER_API_KEY:
-        return None
-    try:
-        categories = ["AI trends", "productivity hacks", "Telegram automation", "prompt engineering", "tech insights"]
-        category = random.choice(categories)
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            f"You are the community manager of {BOT_NAME}, an AI-powered Telegram bot platform. "
-                            "You write engaging, educational discussion posts for a tech-savvy Telegram community. "
-                            "Posts should be informative, conversational, and end with a question to spark discussion. "
-                            "Keep posts between 100-180 words. Use relevant emojis. Format with HTML (bold/code tags). "
-                            "Never spam or repeat yourself. Focus on genuinely useful content."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Write a community discussion post about: {category}. "
-                            "Make it feel natural and conversational, not like a marketing message. "
-                            "End with a genuine question to the community."
-                        ),
-                    },
-                ],
-                "max_tokens": 300,
-                "temperature": 0.85,
-            },
-            timeout=20,
-        )
-        if r.status_code == 200:
-            content = r.json()["choices"][0]["message"]["content"].strip()
-            if content and len(content) > 50:
-                return content
-    except Exception as exc:
-        log.debug("community_manager._try_ai_topic: %s", exc)
-    return None
+def seconds_since_last_channel_post() -> float:
+    return time.time() - _LAST_CHANNEL_POST
 
 
-# ── Smart reply helpers ───────────────────────────────────────────────────────
+def get_next_content_type(daily_count: int) -> str:
+    """Pick the next content type, avoiding recent repeats."""
+    idx = daily_count % len(_CONTENT_TYPE_ROTATION)
+    candidate = _CONTENT_TYPE_ROTATION[idx]
 
-def _should_reply_now() -> bool:
-    """Rate limit: return True only if we're under _MAX_REPLIES_PER_HR."""
-    global _replies_this_hour
-    now = time.time()
-    _replies_this_hour = [t for t in _replies_this_hour if now - t < 3600]
-    return len(_replies_this_hour) < _MAX_REPLIES_PER_HR
+    # Avoid repeating the same type twice in a row
+    if _RECENT_CONTENT_TYPES and _RECENT_CONTENT_TYPES[-1] == candidate:
+        alt_idx = (idx + 1) % len(_CONTENT_TYPE_ROTATION)
+        candidate = _CONTENT_TYPE_ROTATION[alt_idx]
 
+    _RECENT_CONTENT_TYPES.append(candidate)
+    if len(_RECENT_CONTENT_TYPES) > _MAX_RECENT_HISTORY:
+        _RECENT_CONTENT_TYPES.pop(0)
 
-def _generate_smart_reply(
-    message_text: str,
-    context: list[dict] | None = None,
-) -> str | None:
-    """
-    Generate a helpful, context-aware reply to an unanswered group message.
-    Only called when no human has replied after _REPLY_DELAY_SECS AND the
-    group is not in an active discussion.
-
-    context: optional list of recent messages ({"text", "ts", "user_id"})
-             injected so the AI understands the conversation before replying.
-
-    Returns None if AI is unavailable or the message doesn't warrant a reply.
-    """
-    if not OPENROUTER_API_KEY:
-        return None
-    try:
-        # Build a conversation context block for richer, more accurate replies
-        context_block = ""
-        if context:
-            lines = [f"  [{i+1}] {c['text'][:200]}" for i, c in enumerate(context)]
-            context_block = (
-                "\n\nRecent conversation context (background only — reply to the UNANSWERED message below):\n"
-                + "\n".join(lines)
-                + "\n\nUNANSWERED message to reply to:"
-            )
-
-        user_content = (
-            f"{context_block}\n{message_text[:600]}"
-            if context_block
-            else f"Community message: {message_text[:600]}"
-        )
-
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            f"You are TestAudit, the Community Operations Manager of {BOT_NAME}, "
-                            "an AI-powered Telegram platform. You monitor the community group and "
-                            "step in ONLY when a message has been genuinely unanswered — never "
-                            "during active discussions.\n\n"
-                            "Your goal: make the member feel heard, supported, and welcomed.\n\n"
-                            "Rules:\n"
-                            "- Read the full context before replying — understand the conversation thread\n"
-                            "- Keep replies concise: 2-4 sentences max\n"
-                            "- Sound like a real, warm human community manager — never robotic\n"
-                            "- Bot/feature questions → answer accurately, guide to private chat for personal use\n"
-                            "- AI/tech questions → give a genuinely useful, accurate answer\n"
-                            "- Casual conversation/statements → engage naturally and encourage discussion\n"
-                            "- Unclear intent → ask a friendly, focused clarifying question\n"
-                            "- Where appropriate, invite others in the community to weigh in\n"
-                            "- Never say 'As an AI' or reveal you are automated\n"
-                            "- No signature, no sign-off, no 'Best regards'\n"
-                            "- Emojis only when they feel natural — not decorative padding\n"
-                            "- Pure greetings, spam, or messages needing no reply → return exactly: SKIP"
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": user_content,
-                    },
-                ],
-                "max_tokens": 180,
-                "temperature": 0.70,
-            },
-            timeout=18,
-        )
-        if r.status_code == 200:
-            reply = r.json()["choices"][0]["message"]["content"].strip()
-            if reply and reply != "SKIP" and len(reply) > 10:
-                return reply
-    except Exception as exc:
-        log.debug("community_manager._generate_smart_reply: %s", exc)
-    return None
+    return candidate
 
 
-def _post_reply_to_group(text: str, reply_to_message_id: int) -> bool:
-    """
-    Send a threaded reply to a specific message in the community group.
-    Uses services.messaging.send_group_message() — routed to GROUP only.
-    NEVER forwards this to the channel or any private chat.
-    """
-    if not TELEGRAM_GROUP_ID:
-        return False
-    try:
-        from services.messaging import send_group_message
-        result = send_group_message(text, reply_to_message_id=reply_to_message_id)
-        if result:
-            log.info(
-                "TestAudit replied to unanswered message %d in group",
-                reply_to_message_id,
-            )
-            return True
-        return False
-    except Exception as exc:
-        log.warning("community_manager._post_reply_to_group: %s", exc)
-        return False
+def get_fallback_post(content_type: str) -> str:
+    """Return a fallback template post for the given content type."""
+    return _FALLBACK_TEMPLATES.get(content_type, _FALLBACK_TEMPLATES["quick_tip"])
 
 
-def _check_unanswered_messages() -> None:
-    """
-    Human-first smart reply logic:
-    1. Bail immediately if humans are actively discussing (3+ messages in 2 min).
-    2. Find messages unanswered for _REPLY_DELAY_SECS.
-    3. Skip anything already replied by a human, too old, or rate-limited.
-    4. Generate a context-aware AI reply and post it as a threaded reply.
-
-    Processes at most ONE message per 30-second cycle to avoid flooding.
-    """
-    if not _should_reply_now():
-        return
-
-    # Human-first: if a live discussion is happening, stay completely silent.
-    # TestAudit only steps in when the conversation has genuinely paused.
-    if _is_discussion_active():
-        log.debug("community_manager: active discussion in progress — TestAudit holding back")
-        return
-
-    now = time.time()
-    candidate: tuple[int, str] | None = None
-
-    with _pending_lock:
-        for mid, msg in sorted(_pending_messages.items(), key=lambda x: x[1]["ts"]):
-            age = now - msg["ts"]
-            if msg["replied"]:
-                continue
-            if age < _REPLY_DELAY_SECS:
-                continue           # too soon — give humans a chance first
-            if age > _MAX_PENDING_AGE:
-                msg["replied"] = True  # too old — mark and skip
-                continue
-            # Found a candidate — take the oldest unanswered message
-            candidate = (mid, msg["text"])
-            msg["replied"] = True  # optimistic mark so we never double-process
-            break
-
-    if not candidate:
-        return
-
-    mid, text = candidate
-    if not _should_reply_now():
-        return
-
-    # Collect recent conversation context for a more informed, accurate reply.
-    # Exclude the candidate message itself (already the subject of the reply).
-    ctx = [c for c in list(_recent_message_context) if c.get("text", "") != text]
-    ctx = ctx[-_CONTEXT_MESSAGES_FOR_REPLY:]  # keep only the most recent N
-
-    reply = _generate_smart_reply(text, context=ctx or None)
-    if not reply:
-        return
-
-    success = _post_reply_to_group(reply, mid)
-    if success:
-        _replies_this_hour.append(time.time())
-        try:
-            from services.testaudit_core import log_memory
-            log_memory(
-                "action_taken",
-                "TestAudit replied to unanswered community message",
-                detail={"message_id": mid, "reply_chars": len(reply)},
-                category="community",
-                confidence=0.88,
-                outcome="resolved",
-            )
-        except Exception:
-            pass
-
-
-# ── Post to group ─────────────────────────────────────────────────────────────
-
-def _post_to_group(text: str) -> bool:
-    """
-    Send a message EXCLUSIVELY to the community group. Returns True on success.
-    Uses services.messaging.send_group_message() — routed to GROUP only.
-    This function MUST NEVER send to the channel or any private chat.
-    """
-    if not TELEGRAM_GROUP_ID:
-        log.debug("community_manager: TELEGRAM_GROUP_ID not configured")
-        return False
-    try:
-        from services.messaging import send_group_message
-        result = send_group_message(text)
-        if result:
-            log.info("Community Manager posted discussion topic to group")
-            return True
-        return False
-    except Exception as exc:
-        log.warning("community_manager._post_to_group: %s", exc)
-        return False
-
-
-# ── Main action ───────────────────────────────────────────────────────────────
-
-def _trigger_discussion() -> None:
-    """Pick a topic and post it to the group."""
-    global _last_community_post, _posts_today, _recent_topics
-
-    from services.decision_engine import evaluate
-    decision = evaluate(
-        action_type="send_community_message",
-        title="Post community discussion topic",
-        description="Group has been inactive. Post a relevant AI/tech discussion starter.",
-        payload={"group_id": TELEGRAM_GROUP_ID},
-        confidence=0.92,
-        business_risk=False,
-        irreversible=False,
+def build_channel_post_prompt(content_type: str, daily_count: int, draft_num: int = 1) -> list[dict]:
+    """Build the AI prompt for generating a channel post draft."""
+    description = _CONTENT_TYPE_DESCRIPTIONS.get(
+        content_type,
+        "a helpful AI-related post for the FundzAiBot Telegram channel"
     )
 
-    if decision["decision"] != "auto":
-        log.info("community_manager: decision engine blocked post — %s", decision["reason"])
-        return
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are the Communications Manager of FundzAiBot — a professional AI assistant platform.\n\n"
+                "You are writing a post for the official FundzAiBot Telegram channel.\n\n"
+                "WRITING STANDARDS:\n"
+                "- Professional, clear, and genuinely useful\n"
+                "- Educational without being condescending\n"
+                "- Engaging but never clickbait\n"
+                "- 100-280 words maximum\n"
+                "- Use emojis naturally (2-5 max, not decorative spam)\n"
+                "- End with a call-to-action when it fits naturally\n"
+                "- No hashtags\n"
+                "- No markdown — use HTML only: <b>bold</b>, <i>italic</i>, <code>code</code>\n"
+                "- Never start with 'Here is' or 'Sure!' — write the post directly\n"
+                "- Company name: FundzAiBot\n"
+                "- Bot username: @FundzAiBot\n\n"
+                "WHAT NOT TO DO:\n"
+                "- No generic motivational filler\n"
+                "- No vague statements ('AI is changing everything!')\n"
+                "- No excessive self-promotion\n"
+                "- No fake statistics"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Write {description}.\n\n"
+                f"This is draft #{draft_num}, post #{daily_count + 1} today.\n"
+                "Write the post directly — no preamble, no labels, just the post itself."
+            ),
+        },
+    ]
 
-    # Try AI-generated topic first, fall back to static
-    text = _try_ai_topic() or _pick_topic()
-    if not text:
-        return
 
-    success = _post_to_group(text)
-    if success:
-        _last_community_post = time.time()
-        _posts_today += 1
-        if text not in _recent_topics:
-            _recent_topics.append(text)
-            if len(_recent_topics) > _MAX_RECENT_TOPICS:
-                _recent_topics.pop(0)
+def score_post_quality(text: str) -> float:
+    """
+    Score a post for quality (0.0 to 1.0).
+    Higher is better. Used to pick the best draft.
+    """
+    if not text or len(text.strip()) < 50:
+        return 0.0
 
-        from services.testaudit_core import log_memory
-        log_memory(
-            "action_taken",
-            "Community Manager posted discussion topic",
-            detail={"posts_today": _posts_today},
-            category="community",
-            confidence=0.92,
-            outcome="resolved",
-        )
+    score = 0.5  # Baseline
+
+    words = text.split()
+    word_count = len(words)
+
+    # Length sweet spot: 80-250 words
+    if 80 <= word_count <= 250:
+        score += 0.2
+    elif 50 <= word_count < 80 or 250 < word_count <= 300:
+        score += 0.1
+    else:
+        score -= 0.1
+
+    # Has HTML formatting
+    if "<b>" in text or "<i>" in text:
+        score += 0.1
+
+    # Has a call-to-action signal
+    cta_signals = ["try", "use ", "tap ", "click", "start", "open", "learn", "discover", "join"]
+    if any(s in text.lower() for s in cta_signals):
+        score += 0.05
+
+    # Penalize bad patterns
+    bad_patterns = [
+        "here is a post", "sure!", "of course", "certainly",
+        "{n}", "{name}", "hashtag", "lorem ipsum",
+        "as an ai", "language model",
+    ]
+    for pattern in bad_patterns:
+        if pattern in text.lower():
+            score -= 0.2
+
+    # No hashtags
+    if "#" in text:
+        score -= 0.15
+
+    # Has an emoji (natural engagement)
+    emoji_chars = [c for c in text if ord(c) > 8000]
+    if 1 <= len(emoji_chars) <= 8:
+        score += 0.05
+    elif len(emoji_chars) > 12:
+        score -= 0.1
+
+    return max(0.0, min(1.0, score))
 
 
-# ── Monitor loop ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# DM OPERATIONS — PRIVATE EXECUTIVE ASSISTANT TRACKING
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _monitor_loop() -> None:
-    log.info(
-        "👥 Community Manager started — monitoring group activity + smart replies"
+# Track user interaction metadata for Operations Manager context
+# { user_id: { "last_seen": ts, "message_count": int, "last_feature": str } }
+_DM_USER_ACTIVITY: dict[int, dict] = {}
+
+# Minimum days of silence before considering follow-up
+_INACTIVE_DAYS_THRESHOLD = 5
+
+
+def record_dm_activity(user_id: int, feature: str = "chat") -> None:
+    """Record a private chat interaction."""
+    if user_id not in _DM_USER_ACTIVITY:
+        _DM_USER_ACTIVITY[user_id] = {"last_seen": 0, "message_count": 0, "last_feature": "chat"}
+    _DM_USER_ACTIVITY[user_id]["last_seen"] = time.time()
+    _DM_USER_ACTIVITY[user_id]["message_count"] += 1
+    _DM_USER_ACTIVITY[user_id]["last_feature"] = feature
+
+
+def get_inactive_users(days: int = _INACTIVE_DAYS_THRESHOLD) -> list[int]:
+    """Return user IDs who have been inactive for more than `days` days."""
+    threshold = time.time() - (days * 86400)
+    return [
+        uid for uid, data in _DM_USER_ACTIVITY.items()
+        if data["last_seen"] < threshold and data["message_count"] > 0
+    ]
+
+
+def get_dm_stats() -> dict:
+    """Return a summary of DM activity for the Operations report."""
+    total = len(_DM_USER_ACTIVITY)
+    active_24h = sum(
+        1 for d in _DM_USER_ACTIVITY.values()
+        if time.time() - d["last_seen"] < 86400
     )
-    time.sleep(120)  # let bot fully start
-
-    _last_inactivity_check: float = 0.0
-
-    while _running:
-        try:
-            # ── Smart reply: check every 30 seconds for unanswered messages ──
-            # Human-first: only steps in after _REPLY_DELAY_SECS with no human reply
-            if TELEGRAM_GROUP_ID:
-                _check_unanswered_messages()
-
-            # ── Discussion topic: check every _CHECK_INTERVAL_SECS (5 min) ──
-            # Posts a fresh topic only when the group has been genuinely quiet
-            now = time.time()
-            if now - _last_inactivity_check >= _CHECK_INTERVAL_SECS:
-                _last_inactivity_check = now
-                if TELEGRAM_GROUP_ID and _is_group_inactive() and _can_post():
-                    log.info("Community Manager: group inactive — triggering discussion")
-                    _trigger_discussion()
-
-        except Exception as exc:
-            log.error("community_manager monitor error: %s", exc)
-
-        # Sleep in 1-second ticks so the thread responds quickly to shutdown
-        for _ in range(_REPLY_CHECK_SECS):
-            if not _running:
-                break
-            time.sleep(1)
-
-
-def start_community_manager() -> None:
-    global _running, _thread
-    if _running:
-        return
-    if not TELEGRAM_GROUP_ID:
-        log.warning("Community Manager: TELEGRAM_GROUP_ID not set — skipping start")
-        return
-    _running = True
-    _thread  = threading.Thread(target=_monitor_loop, daemon=True, name="community-mgr")
-    _thread.start()
-    log.info("✅ Community Manager started (group: %s)", TELEGRAM_GROUP_ID)
-
-
-def stop_community_manager() -> None:
-    global _running
-    _running = False
-
-
-# ── New member welcoming ───────────────────────────────────────────────────────
-
-async def welcome_new_member(bot, member, chat) -> None:
-    """
-    Send a TestAudit-styled welcome for a new group member.
-
-    Called from new_member_handler when a user joins. The bot itself
-    stays silent; this function sends the welcome on behalf of TestAudit
-    so members see the company's Operations Manager — not a raw bot reply.
-    """
-    import html as _html
-
-    try:
-        bot_info  = await bot.get_me()
-        bot_uname = bot_info.username or BOT_NAME
-        name      = _html.escape(member.first_name or "there")
-
-        text = (
-            f"👋 Welcome to the community, <b>{name}!</b>\n\n"
-            f"Great to have you here. This is a space for AI enthusiasts, "
-            f"builders, and curious minds.\n\n"
-            f"💡 Feel free to ask questions, share ideas, and connect with "
-            f"other members. Discussions, feedback, and feature requests "
-            f"are all welcome.\n\n"
-            f"🤖 For personal AI features — chat, image generation, VIP "
-            f"upgrades, and more — open <b>@{bot_uname}</b> in a private "
-            f"conversation.\n\n"
-            f"<i>— TestAudit · Community Operations Manager</i>"
-        )
-
-        await bot.send_message(
-            chat_id=chat.id,
-            text=text,
-            parse_mode="HTML",
-        )
-        log.info(
-            "TestAudit welcomed new member user=%s group=%s",
-            member.id, chat.id,
-        )
-
-    except Exception as exc:
-        log.warning("welcome_new_member: %s", exc)
+    inactive_5d = len(get_inactive_users(5))
+    return {
+        "total_tracked": total,
+        "active_24h": active_24h,
+        "inactive_5d": inactive_5d,
+        "channel_posts_today": get_channel_post_today(),
+        "seconds_since_last_channel_post": seconds_since_last_channel_post(),
+    }

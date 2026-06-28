@@ -166,6 +166,8 @@ def bootstrap_departments() -> None:
     from services.community_manager   import start_community_manager, stop_community_manager
     from services.channel_manager     import start_channel_manager, stop_channel_manager
     from services.customer_success    import start_customer_success, stop_customer_success
+    from services.autonomous_mode     import start_autonomous_mode_monitor, stop_autonomous_mode_monitor
+    from services.feature_tracker     import start_feature_tracker, stop_feature_tracker
 
     # Core intelligence layer
     register(
@@ -226,6 +228,31 @@ def bootstrap_departments() -> None:
         ),
         start_fn=start_customer_success,
         stop_fn=stop_customer_success,
+    )
+
+    # Autonomous Operations Mode
+    register(
+        name="Autonomous Operations Mode",
+        role="CEO Absence & Emergency Authority Manager",
+        description=(
+            "Monitors CEO activity. After 7 days inactivity → switches to Autonomous Mode. "
+            "Executes only pre-approved emergency actions. Generates CEO Return Recovery Report."
+        ),
+        start_fn=start_autonomous_mode_monitor,
+        stop_fn=stop_autonomous_mode_monitor,
+    )
+
+    # Feature Request Engine
+    register(
+        name="Feature Intelligence Engine",
+        role="Product Improvement & Feature Request Tracker",
+        description=(
+            "Collects feature requests from user feedback, error patterns, onboarding dropouts, "
+            "and usage analytics. Ranks by demand and business value. "
+            "Delivers weekly recommendations to the CEO every Monday."
+        ),
+        start_fn=start_feature_tracker,
+        stop_fn=stop_feature_tracker,
     )
 
     # Start all registered departments

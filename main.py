@@ -37,7 +37,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 from services.keepalive import start_keepalive as _early_keepalive, mark_ready
 _early_keepalive()
 
-from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+)
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -239,11 +244,24 @@ async def post_init(application: Application) -> None:
         BotCommand("announce_both",        "📣 Push to channel + group"),
     ]
 
-    # Set public list for everyone
+    # Set public list for everyone (private chats + any chat without an explicit scope override)
     await application.bot.set_my_commands(
         public_commands,
         scope=BotCommandScopeDefault(),
     )
+
+    # ── CRITICAL: clear ALL commands from every group and supergroup ───────────
+    # BotCommandScopeAllGroupChats overrides the Default scope for groups, so
+    # users never see slash-command suggestions or the command menu inside groups.
+    # This makes the group feel like a human community rather than a bot interface.
+    try:
+        await application.bot.set_my_commands(
+            [],                                 # empty — no commands in any group
+            scope=BotCommandScopeAllGroupChats(),
+        )
+        log.info("  Group menu   : ✅ cleared for ALL groups (no command suggestions)")
+    except Exception as exc:
+        log.warning("Could not clear group command menu: %s", exc)
 
     # Set full admin list — only shows up in admin's private chat
     if ADMIN_USER_ID:
@@ -312,8 +330,10 @@ async def error_handler(update, context) -> None:
     )
     if is_transient:
         log.warning("Transient infra error: %.120s", err)
-        # Still inform the user — never leave them in silence
-        if update and update.effective_message and not (update.callback_query):
+        # Only inform the user in PRIVATE chats — stay completely silent in groups
+        _chat = update.effective_chat if update else None
+        _is_private = _chat and _chat.type == "private"
+        if _is_private and update.effective_message and not update.callback_query:
             try:
                 await update.effective_message.reply_text(
                     "⚠️ A temporary network issue occurred. Please try again in a moment."
@@ -334,8 +354,10 @@ async def error_handler(update, context) -> None:
     except Exception:
         pass
 
-    # Only try to reply when we have an actual user message (not a callback ghost)
-    if update and update.effective_message and not (update.callback_query):
+    # Only reply in PRIVATE chats — never post error messages into groups
+    _chat = update.effective_chat if update else None
+    _is_private = _chat and _chat.type == "private"
+    if _is_private and update.effective_message and not update.callback_query:
         try:
             await update.effective_message.reply_text(
                 "⚠️ Something went wrong. Please try again in a moment."

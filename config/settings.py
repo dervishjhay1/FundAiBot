@@ -47,7 +47,7 @@ FLASK_HOST: str = "0.0.0.0"
 
 # ── Bot identity ──────────────────────────────────────────────────────────────
 BOT_NAME: str = "FundzAiBot"
-BOT_VERSION: str = "4.0.0"
+BOT_VERSION: str = "5.0.0"
 BOT_TAGLINE: str = "Your Intelligent AI Assistant"
 
 # ── AI defaults ───────────────────────────────────────────────────────────────

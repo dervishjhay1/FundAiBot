@@ -90,6 +90,72 @@ def _sb_get(table: str, params: dict | None = None) -> requests.Response | None:
         return None
 
 
+# ── State persistence (survives restarts / Railway redeploys) ─────────────────
+
+def _persist_aom_state() -> None:
+    """
+    Save AOM state to Supabase testaudit_autonomous_log as a state_snapshot event.
+    Called on every state transition so restarts load the correct last-known state.
+    """
+    try:
+        _sb_post(_AOM_TABLE, {
+            "event_type": "state_snapshot",
+            "title":      "AOM State Snapshot",
+            "detail": {
+                "ceo_last_active": _ceo_last_active,
+                "autonomous_mode": _autonomous_mode,
+                "aom_started_at":  _aom_started_at,
+                "emergency_actions_count": len(_emergency_actions),
+            },
+        })
+    except Exception as exc:
+        log.debug("autonomous_mode._persist_aom_state: %s", exc)
+
+
+def _restore_aom_state() -> None:
+    """
+    Load AOM state from Supabase on startup so inactivity window is continuous
+    across Railway redeploys and Replit restarts.
+    """
+    global _ceo_last_active, _autonomous_mode, _aom_started_at, _return_report_sent
+
+    try:
+        r = _sb_get(_AOM_TABLE, {
+            "event_type": "eq.state_snapshot",
+            "select":     "detail,created_at",
+            "order":      "created_at.desc",
+            "limit":      "1",
+        })
+        if not r or r.status_code != 200:
+            return
+        rows = r.json()
+        if not rows:
+            return
+
+        detail = rows[0].get("detail") or {}
+        saved_last_active = detail.get("ceo_last_active")
+        saved_aom         = detail.get("autonomous_mode", False)
+        saved_aom_start   = detail.get("aom_started_at")
+
+        if saved_last_active:
+            _ceo_last_active = float(saved_last_active)
+            log.info(
+                "autonomous_mode: restored last CEO activity = %.1f days ago",
+                (time.time() - _ceo_last_active) / 86400,
+            )
+
+        if saved_aom:
+            _autonomous_mode    = True
+            _aom_started_at     = float(saved_aom_start) if saved_aom_start else time.time()
+            _return_report_sent = False
+            log.warning(
+                "autonomous_mode: restored AUTONOMOUS MODE — was active at last snapshot"
+            )
+
+    except Exception as exc:
+        log.debug("autonomous_mode._restore_aom_state: %s", exc)
+
+
 # ── CEO Activity Tracking ─────────────────────────────────────────────────────
 
 def record_ceo_activity(action: str = "command") -> None:
@@ -109,6 +175,8 @@ def record_ceo_activity(action: str = "command") -> None:
         _return_report_sent = True
         _autonomous_mode = False
         log.info("✅ Autonomous Operations Mode deactivated — CEO is back")
+
+    _persist_aom_state()
 
 
 def get_ceo_inactive_hours() -> float:
@@ -164,6 +232,7 @@ def _activate_aom() -> None:
         CEO_INACTIVE_THRESHOLD_DAYS,
     )
 
+    _persist_aom_state()
     _log_aom_event(
         "aom_activated",
         f"Autonomous Operations Mode activated after {CEO_INACTIVE_THRESHOLD_DAYS} days of CEO inactivity.",
@@ -296,6 +365,7 @@ def _handle_ceo_return() -> None:
     # Clear emergency log now that report is sent
     _emergency_actions.clear()
     _aom_started_at = None
+    _persist_aom_state()
 
 
 def _build_recovery_report(aom_hours: float) -> str:
@@ -453,7 +523,15 @@ def _monitor_loop() -> None:
     global _autonomous_mode
 
     log.info("🤖 Autonomous Mode monitor started — threshold: %d days", CEO_INACTIVE_THRESHOLD_DAYS)
-    time.sleep(120)  # let bot fully start
+    time.sleep(60)  # let bot fully start, then restore state before first check
+
+    # Restore persisted state so inactivity window survives restarts
+    _restore_aom_state()
+    log.info(
+        "autonomous_mode: state restored — last_active=%.1f days ago | aom=%s",
+        (time.time() - _ceo_last_active) / 86400,
+        _autonomous_mode,
+    )
 
     while _running:
         try:

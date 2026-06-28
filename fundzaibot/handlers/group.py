@@ -6,6 +6,9 @@ Provides:
   • /ai <question> command inside the group
   • @mention reply when bot is @tagged in group
   • Anti-spam filter with warning + auto-mute system
+  • Smart response system (TestAudit community manager persona)
+    — monitors unanswered messages, waits 2-3 min before assisting
+    — never dominates; humans respond first
 
 All handlers only activate in group/supergroup chats.
 """
@@ -283,3 +286,132 @@ async def spam_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
         except Exception:
             pass
+
+
+# ── Smart community message tracker ───────────────────────────────────────────
+
+async def smart_community_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    TestAudit Community Manager — Smart Response System.
+
+    Monitors group messages and, after ~2.5 minutes with no human reply,
+    steps in with a helpful AI-generated response. Never interrupts active
+    human conversations — humans always get first chance to reply.
+
+    Runs on group 3 (after spam_filter) so it observes all passing messages.
+    """
+    message = update.message
+    if not message or not message.text:
+        return
+
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat or user.is_bot:
+        return
+
+    if not FEATURE_FLAGS.get("chat_enabled", True):
+        return
+
+    text = message.text.strip()
+    if len(text) < 10:
+        return
+
+    from services.community_manager import (
+        register_message, mark_replied, get_unanswered_messages,
+        can_post_in_group, record_group_post,
+    )
+
+    # If this is a reply to another message, mark the original as replied
+    if message.reply_to_message:
+        mark_replied(chat.id, message.reply_to_message.message_id)
+    else:
+        mark_replied(chat.id)
+
+    # Register this new message for smart-response monitoring
+    # Only track messages that look like questions or help requests
+    is_question = (
+        "?" in text
+        or any(w in text.lower() for w in (
+            "how", "what", "why", "when", "where", "who",
+            "can", "help", "issue", "problem", "error",
+            "works", "working", "fix", "not", "fail",
+        ))
+    )
+
+    if is_question:
+        register_message(chat.id, message.message_id, text, user.first_name or "User")
+        # Schedule a deferred check
+        asyncio.create_task(
+            _deferred_smart_reply(chat.id, message.message_id, context)
+        )
+
+
+async def _deferred_smart_reply(chat_id: int, msg_id: int, context) -> None:
+    """
+    Wait 2.5 minutes, then check if the message is still unanswered.
+    If yes — and the group has been quiet — post a helpful response.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(150)  # 2.5 minutes
+
+    from services.community_manager import (
+        get_unanswered_messages, can_post_in_group, record_group_post,
+    )
+
+    unanswered = get_unanswered_messages(chat_id)
+    target = next((m for m in unanswered if m["id"] == msg_id), None)
+
+    if not target:
+        return  # Already replied to or too old
+
+    if not can_post_in_group(chat_id, min_gap=60):
+        return  # Posted recently — stay quiet
+
+    question_text = target["text"]
+    user_name = target.get("user", "someone")
+
+    from services.ai_service import get_ai_response
+    import asyncio
+
+    system_prompt = (
+        "You are TestAudit, the community manager of FundzAiBot. "
+        "You are a helpful, friendly, and knowledgeable assistant in a Telegram community group. "
+        "A community member asked a question and no one has replied yet. "
+        "Provide a concise, genuinely helpful response (2-4 sentences max). "
+        "Be warm but professional. Do NOT pretend to be the user. Do NOT use excessive emojis. "
+        "If you don't know the answer with confidence, say so honestly and suggest where they might find help."
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question_text},
+    ]
+
+    loop = asyncio.get_event_loop()
+    try:
+        response, provider = await loop.run_in_executor(
+            None,
+            lambda: get_ai_response(messages),
+        )
+
+        if not response or len(response.strip()) < 10:
+            return
+
+        # Trim if too long for a group message
+        if len(response) > 1000:
+            response = response[:950] + "…"
+
+        reply_text = f"💬 <b>{html.escape(user_name)}</b> — {response}"
+
+        await context.bot.send_message(
+            chat_id,
+            reply_text,
+            parse_mode="HTML",
+            reply_to_message_id=msg_id,
+        )
+        record_group_post(chat_id)
+        log.info("Smart community reply sent: chat=%s msg=%s provider=%s",
+                 chat_id, msg_id, provider)
+
+    except Exception as exc:
+        log.warning("Smart community reply failed: %s", exc)

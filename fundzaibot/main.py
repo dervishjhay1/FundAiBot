@@ -66,7 +66,7 @@ from handlers.retouch import photo_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
-from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter
+from handlers.group import new_member_handler, group_ai_handler, mention_handler, spam_filter, smart_community_handler
 from handlers.membership import membership_change_handler
 from handlers.profile import profile_handler, referral_handler, history_handler, stats_handler
 from handlers.payment import subscribe_handler, precheckout_handler, successful_payment_handler
@@ -184,6 +184,12 @@ async def post_init(application: Application) -> None:
     log.info("Bot commands registered (public=%d, admin=%d).",
              len(public_commands), len(admin_commands))
     await queue_manager.start()
+
+    # ── Background services ───────────────────────────────────────────────────
+    from services.channel_publisher import run_channel_publisher
+    asyncio.create_task(run_channel_publisher(application.bot))
+    log.info("Channel publisher background task started.")
+
     mark_ready()
     log.info("Bot fully initialised — polling active.")
 
@@ -266,12 +272,16 @@ async def _smart_text_handler(update, context) -> None:
     """
     Route plain-text messages:
     1. If user is in image-prompt flow → image handler
-    2. Otherwise → AI chat handler
+    2. If user is in CEO Office session → CEO Office handler
+    3. Otherwise → AI chat handler
     """
     user = update.effective_user
     if user and user.id in _pending:
         await handle_image_prompt_message(update, context)
-    else:
+        return
+    from handlers.ceo_office import handle_ceo_message
+    handled = await handle_ceo_message(update, context)
+    if not handled:
         await chat_handler(update, context)
 
 
@@ -391,6 +401,15 @@ def build_app() -> Application:
             spam_filter,
         ),
         group=2,
+    )
+    # Smart community manager — group 3: monitors unanswered questions,
+    # waits 2.5 min before stepping in (humans always respond first)
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+            smart_community_handler,
+        ),
+        group=3,
     )
 
     # ── Free-text messages (PRIVATE only — groups handled above) ──────────────

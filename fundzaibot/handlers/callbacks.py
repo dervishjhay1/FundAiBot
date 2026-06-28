@@ -93,6 +93,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await audit_callback(query, context, action)
         return
 
+    # ── CEO Office (owner-only executive mode) ────────────────────────────────
+    if data.startswith("ceo_office:"):
+        from config.settings import is_owner
+        if not is_owner(user.id):
+            await query.answer("⛔ CEO Office — Owner only.", show_alert=True)
+            return
+        action = data[len("ceo_office:"):]
+        from handlers.ceo_office import ceo_office_callback
+        await ceo_office_callback(query, context, action)
+        return
+
     # ── Announcement navigator (◀ Prev / Next ▶ on announcement card) ──────────
     if data.startswith("announce:nav:"):
         await query.answer()

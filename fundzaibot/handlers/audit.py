@@ -1505,6 +1505,9 @@ def _render_dashboard(audit: dict) -> tuple[str, InlineKeyboardMarkup]:
         )
     action_row.append(InlineKeyboardButton("« Admin Panel", callback_data="admin:panel"))
     rows.append(action_row)
+    rows.append([
+        InlineKeyboardButton("🧠 CEO Office", callback_data="ceo_office:menu"),
+    ])
 
     return text, InlineKeyboardMarkup(rows)
 

@@ -3,17 +3,19 @@ FundzAiBot — Channel Manager (TestAudit role)
 
 Manages the official Telegram Channel on behalf of the company.
 
-Targets 10–15 high-quality posts per day across varied categories:
-  • AI education
-  • FundzAiBot tutorials
-  • New features & tips
-  • Productivity insights
-  • Telegram automation tips
-  • Security awareness
-  • Industry news highlights
-  • Community highlights
-  • Inspirational quotes
-  • Educational how-tos
+Publishing cadence: approximately one high-quality post every 2–3 hours,
+distributed naturally across the active day (07:00–22:00 UTC) — targeting
+5–7 posts per day.
+
+Every draft is scored for quality before publishing. Posts below the
+quality threshold are skipped. Category rotation is enforced so the feed
+stays varied.
+
+Content categories:
+  • AI education            • FundzAiBot tutorials
+  • Productivity insights   • Security awareness
+  • Industry inspiration    • Feature highlights
+  • Community highlights    • Telegram tips
 
 Posts are logged to Supabase to avoid repetition.
 All posting goes through the Decision Engine — confidence 0.91 (operational).
@@ -39,18 +41,20 @@ log = get_logger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-_POSTS_TARGET_MIN  = 10
-_POSTS_TARGET_MAX  = 15
-_MIN_POST_GAP_MINS = 60       # at least 60 min between posts (spread across the day)
-_ACTIVE_HOURS      = (7, 22)  # only post between 07:00 and 22:00 UTC
-_CHECK_INTERVAL    = 1800     # check every 30 min
+_POSTS_TARGET_MIN    = 5      # minimum posts per day
+_POSTS_TARGET_MAX    = 7      # maximum posts per day (1 post per ~2h over 15h window)
+_MIN_POST_GAP_MINS   = 120    # at least 2 hours between posts
+_ACTIVE_HOURS        = (7, 22) # only post between 07:00 and 22:00 UTC
+_CHECK_INTERVAL      = 1800   # check every 30 min
+_QUALITY_THRESHOLD   = 50     # minimum quality score (0-100) — below this, skip the post
 
 _running: bool = False
 _thread:  threading.Thread | None = None
 
-_last_post_time: float = 0.0
-_posts_today: int = 0
-_posts_today_date: str = ""
+_last_post_time:      float = 0.0
+_posts_today:         int   = 0
+_posts_today_date:    str   = ""
+_last_category_posted: str  = ""   # track last category to enforce rotation
 
 # ── Content library ───────────────────────────────────────────────────────────
 
@@ -292,6 +296,46 @@ _CONTENT_LIBRARY: list[dict] = [
 ]
 
 
+# ── Content quality gate ──────────────────────────────────────────────────────
+
+def _content_quality_score(text: str) -> int:
+    """
+    Score a draft post 0-100 before publishing.
+    Checks length, structure, formatting, and engagement signals.
+    Posts below _QUALITY_THRESHOLD are skipped.
+    """
+    score = 0
+    word_count = len(text.split())
+
+    # Length: 80-350 words ideal
+    if 80 <= word_count <= 350:
+        score += 30
+    elif 50 <= word_count < 80 or 350 < word_count <= 500:
+        score += 15
+
+    # Has bold formatting (structured, not wall of text)
+    if "<b>" in text:
+        score += 20
+
+    # Has a footer / brand tagline
+    if "📌" in text or "— TestAudit" in text:
+        score += 10
+
+    # Has numbered steps or bullet points (educational structure)
+    if any(s in text for s in ["1️⃣", "✅", "•\n", "• ", "1.\n", "2.\n"]):
+        score += 15
+
+    # Minimum content length beyond empty
+    if len(text) > 200:
+        score += 15
+
+    # Has at least one emoji (engagement signal)
+    if any(ord(c) > 0x1F300 for c in text):
+        score += 10
+
+    return min(score, 100)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _pick_content() -> dict | None:
@@ -451,14 +495,26 @@ def _should_post_now() -> bool:
 
 
 def _do_post() -> None:
-    """Execute one channel post."""
-    global _last_post_time, _posts_today
+    """
+    Execute one channel post with quality gate and category rotation.
+
+    Flow:
+    1. Decision engine approval
+    2. Category rotation — avoid repeating the last category
+    3. Content selection (AI-generated or static library)
+    4. Quality scoring — skip posts below _QUALITY_THRESHOLD
+    5. Publish + log
+    """
+    global _last_post_time, _posts_today, _last_category_posted
 
     from services.decision_engine import evaluate
     decision = evaluate(
         action_type="send_channel_post",
         title="Post educational content to channel",
-        description="Scheduled channel content post — part of 10-15 daily posts strategy.",
+        description=(
+            "Scheduled channel content post — 1 post per 2-3 hours, "
+            f"targeting {_POSTS_TARGET_MIN}-{_POSTS_TARGET_MAX} posts/day."
+        ),
         payload={"channel_id": TELEGRAM_CHANNEL_ID},
         confidence=0.91,
         business_risk=False,
@@ -469,11 +525,18 @@ def _do_post() -> None:
         log.info("channel_manager: blocked by decision engine — %s", decision["reason"])
         return
 
-    # Randomly pick between AI-generated and static
-    categories = ["ai_education", "productivity", "tutorial", "security", "inspiration", "feature", "telegram_tip"]
-    cat = random.choice(categories)
+    # ── Category rotation: pick a category different from the last one ────────
+    all_categories = [
+        "ai_education", "productivity", "tutorial",
+        "security", "inspiration", "feature", "telegram_tip",
+    ]
+    available_cats = [c for c in all_categories if c != _last_category_posted]
+    if not available_cats:
+        available_cats = all_categories
+    cat = random.choice(available_cats)
 
-    content = None
+    # ── Content selection: prefer AI-generated (40% chance), fall back static ─
+    content: dict | None = None
     if OPENROUTER_API_KEY and random.random() < 0.4:
         content = _try_ai_content(cat)
 
@@ -483,21 +546,44 @@ def _do_post() -> None:
     if not content:
         return
 
+    # ── Quality gate: score the draft before publishing ───────────────────────
+    score = _content_quality_score(content["text"])
+    if score < _QUALITY_THRESHOLD:
+        log.info(
+            "channel_manager: skipped '%s' — quality score %d < %d threshold",
+            content["title"], score, _QUALITY_THRESHOLD,
+        )
+        return
+
+    # ── Publish ───────────────────────────────────────────────────────────────
     msg_id = _post_to_channel(content["text"])
     if msg_id is not None:
-        _last_post_time = time.time()
-        _posts_today   += 1
+        _last_post_time      = time.time()
+        _posts_today        += 1
+        _last_category_posted = content["category"]
         _log_post(content["category"], content["title"], msg_id)
 
-        from services.testaudit_core import log_memory
-        log_memory(
-            "action_taken",
-            f"Channel Manager posted: {content['title']}",
-            detail={"category": content["category"], "posts_today": _posts_today},
-            category="channel",
-            confidence=0.91,
-            outcome="resolved",
+        log.info(
+            "Channel Manager posted '%s' (cat=%s score=%d posts_today=%d)",
+            content["title"], content["category"], score, _posts_today,
         )
+
+        try:
+            from services.testaudit_core import log_memory
+            log_memory(
+                "action_taken",
+                f"Channel Manager posted: {content['title']}",
+                detail={
+                    "category":   content["category"],
+                    "quality":    score,
+                    "posts_today": _posts_today,
+                },
+                category="channel",
+                confidence=0.91,
+                outcome="resolved",
+            )
+        except Exception:
+            pass
 
 
 # ── Background loop ───────────────────────────────────────────────────────────

@@ -239,9 +239,8 @@ async def post_init(application: Application) -> None:
         BotCommand("updateannouncement",   "✏️ Edit current announcement"),
         BotCommand("pinphoto",             "🖼️ Add/remove banner image"),
         BotCommand("listannouncements",    "📜 Announcement history"),
-        BotCommand("announce_channel",     "📢 Push to channel"),
-        BotCommand("announce_group",       "👥 Push to group"),
-        BotCommand("announce_both",        "📣 Push to channel + group"),
+        BotCommand("announce_channel",     "📢 Push to CHANNEL only"),
+        BotCommand("announce_group",       "👥 Push to GROUP only"),
     ]
 
     # Set public list for everyone (private chats + any chat without an explicit scope override)

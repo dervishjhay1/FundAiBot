@@ -46,6 +46,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     admin = is_admin(user.id)
     log.debug("Callback: user=%s admin=%s data=%s", user.id, admin, data)
 
+    # Record CEO activity for Autonomous Operations Mode whenever admin touches any callback
+    if admin:
+        try:
+            from services.autonomous_mode import record_ceo_activity
+            record_ceo_activity("callback")
+        except Exception:
+            pass
+
     # ── Membership verify callback ────────────────────────────────────────────
     if data == "membership:verify":
         await query.answer("Checking membership…")

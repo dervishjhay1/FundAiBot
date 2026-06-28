@@ -689,65 +689,37 @@ async def announce_group_handler(update: Update, context: ContextTypes.DEFAULT_T
         log.error("announce_group: %s", exc)
 
 
-# ── /announce_both ────────────────────────────────────────────────────────────
+# ── /announce_both — REMOVED ──────────────────────────────────────────────────
+#
+# announce_both_handler has been PERMANENTLY REMOVED.
+#
+# Architecture rule (final):
+#   Channel posts → /announce_channel → CHANNEL only
+#   Group posts   → /announce_group   → GROUP only
+#   These two environments are COMPLETELY INDEPENDENT.
+#   No command, service, or function may automatically mirror content
+#   from the channel to the group or vice versa.
+#
+# This stub is intentionally left as a named object so main.py can import
+# it and immediately redirect users who try the old command to the
+# correct separate commands.
 
 async def announce_both_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/announce_both — Push the active announcement to both channel and group."""
-    user = update.effective_user
-    if not _guard(user):
-        await update.effective_message.reply_text("⛔ Admin only.")
-        return
-
-    from config.settings import TELEGRAM_CHANNEL_ID, TELEGRAM_GROUP_ID
-    if not TELEGRAM_CHANNEL_ID and not TELEGRAM_GROUP_ID:
-        await update.effective_message.reply_text(
-            "⚠️ <b>Neither TELEGRAM_CHANNEL_ID nor TELEGRAM_GROUP_ID is set.</b>\n\n"
-            "Add them to Railway environment variables and redeploy.",
-            parse_mode="HTML",
-        )
-        return
-
-    loop = asyncio.get_running_loop()
-    ann  = await loop.run_in_executor(None, get_active_announcement)
-    if not ann:
-        await update.effective_message.reply_text(
-            "📭 <b>No active announcement.</b>\n\n"
-            "Create one first with <code>/pin &lt;message&gt;</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    card      = format_announcement_card(ann.get("message", ""))
-    photo_url = ann.get("photo_url") or ""
-    results   = []
-
-    for label, chat_id in [("channel", TELEGRAM_CHANNEL_ID), ("group", TELEGRAM_GROUP_ID)]:
-        if not chat_id:
-            results.append(f"⏭️ {label.capitalize()}: skipped (ID not configured)")
-            continue
-        try:
-            if photo_url:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_url,
-                    caption=card,
-                    parse_mode="HTML",
-                    reply_markup=announcement_keyboard(SUPPORT_URL),
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=card,
-                    parse_mode="HTML",
-                    reply_markup=announcement_keyboard(SUPPORT_URL),
-                )
-            results.append(f"✅ {label.capitalize()}: sent")
-            log.info("Announcement pushed to %s by admin %s", label, user.id)
-        except Exception as exc:
-            results.append(f"❌ {label.capitalize()}: {html.escape(str(exc))}")
-            log.error("announce_both → %s: %s", label, exc)
-
+    """
+    /announce_both — REMOVED.
+    Channel and group are independent environments.
+    Use /announce_channel and /announce_group separately.
+    """
     await update.effective_message.reply_text(
-        "<b>📢 Broadcast Results:</b>\n\n" + "\n".join(results),
+        "⚠️ <b>/announce_both has been removed.</b>\n\n"
+        "The channel and group are now <b>completely independent environments</b>.\n\n"
+        "Use the separate commands:\n"
+        "• <code>/announce_channel</code> — push to channel only\n"
+        "• <code>/announce_group</code>   — push to group only\n\n"
+        "<i>Channel posts must NEVER appear in the group automatically.</i>",
         parse_mode="HTML",
+    )
+    log.warning(
+        "Admin %s attempted /announce_both — redirected to separate commands.",
+        update.effective_user.id if update.effective_user else "?",
     )

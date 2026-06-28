@@ -69,6 +69,7 @@ from handlers.admin import (
     admin_clearlogs_handler, admin_addadmin_handler, admin_removeadmin_handler,
     admin_listadmins_handler, admin_dm_handler,
     admin_help_handler, admin_clearchat_handler,
+    admin_verify_routing_handler,
 )
 from handlers.announcements import (
     pin_handler, unpin_handler, updateannouncement_handler,
@@ -109,6 +110,7 @@ from services.queue_manager import queue_manager
 from services.database import bootstrap_schema, load_secondary_admins
 from services.vip_scheduler import start_vip_scheduler
 from services.department_registry import bootstrap_departments
+from services.messaging import verify_routing
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -241,6 +243,7 @@ async def post_init(application: Application) -> None:
         BotCommand("listannouncements",    "📜 Announcement history"),
         BotCommand("announce_channel",     "📢 Push to CHANNEL only"),
         BotCommand("announce_group",       "👥 Push to GROUP only"),
+        BotCommand("verify_routing",       "🔍 Verify channel/group routing isolation"),
     ]
 
     # Set public list for everyone (private chats + any chat without an explicit scope override)
@@ -282,6 +285,20 @@ async def post_init(application: Application) -> None:
         log.info("✅ AI departments bootstrapped successfully")
     except Exception as exc:
         log.error("Failed to bootstrap departments: %s", exc)
+
+    # ── Routing verification — confirm channel/group IDs are correct ──────────
+    # Runs synchronously; logs a full report. If Discussion Group linking is
+    # detected (Telegram automatically forwards channel posts to the group),
+    # a CRITICAL error is logged with the exact fix steps.
+    try:
+        routing = verify_routing()
+        if not routing["ok"]:
+            log.error(
+                "⚠️  ROUTING ISSUES DETECTED — run /verify_routing for details. "
+                "Channel posts may appear in the group until fixed."
+            )
+    except Exception as exc:
+        log.error("Routing verification failed unexpectedly: %s", exc)
 
     mark_ready()
     log.info("Bot fully initialised — polling active.")
@@ -457,6 +474,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("health",             status_handler))
     app.add_handler(CommandHandler("status",             status_handler))
     app.add_handler(CommandHandler("testaudit",          testaudit_handler))
+    app.add_handler(CommandHandler("verify_routing",     admin_verify_routing_handler))
 
     # ── Announcements ─────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pin",                      pin_handler))

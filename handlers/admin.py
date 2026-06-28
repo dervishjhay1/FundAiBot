@@ -42,6 +42,11 @@ def admin_only(func):
         if not user or not is_admin(user.id):
             await update.effective_message.reply_text("⛔ Admin only.")
             return
+        try:
+            from services.autonomous_mode import record_ceo_activity
+            record_ceo_activity(func.__name__)
+        except Exception:
+            pass
         return await func(update, context)
     return wrapper
 

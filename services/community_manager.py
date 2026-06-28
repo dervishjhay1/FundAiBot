@@ -18,6 +18,7 @@ from __future__ import annotations
 import random
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 import requests
@@ -45,6 +46,12 @@ _MAX_REPLIES_PER_HR = 4     # hard cap: TestAudit sends at most 4 AI replies per
 _MAX_PENDING_AGE    = 600   # ignore messages older than 10 min (too stale to reply)
 _REPLY_CHECK_SECS   = 30    # check for unanswered messages every 30 seconds
 
+# Active discussion detection: if this many messages arrive within the window,
+# humans are actively chatting and TestAudit must stay completely silent.
+_ACTIVE_DISCUSSION_MSGS        = 3    # 3+ messages = active discussion in progress
+_ACTIVE_DISCUSSION_WINDOW_SECS = 120  # 2-minute burst window
+_CONTEXT_MESSAGES_FOR_REPLY    = 4    # recent messages to inject as reply context
+
 _running: bool = False
 _thread:  threading.Thread | None = None
 
@@ -63,6 +70,11 @@ _MAX_RECENT_TOPICS = 20
 _pending_messages: dict[int, dict] = {}
 _pending_lock = threading.Lock()
 _replies_this_hour: list[float] = []   # timestamps of AI replies sent (rate limiting)
+
+# Chronological conversation context window — last 10 messages in arrival order.
+# Used to inject recent context into smart replies so TestAudit understands
+# the conversation thread before stepping in.
+_recent_message_context: deque = deque(maxlen=10)
 
 # ── Discussion topic templates ────────────────────────────────────────────────
 
@@ -253,6 +265,14 @@ def record_group_message(
             "replied": False,
         }
 
+        # Also store in chronological context window so smart replies
+        # can understand the conversation thread before responding
+        _recent_message_context.append({
+            "text":    text[:300],
+            "ts":      time.time(),
+            "user_id": user_id,
+        })
+
         # Purge messages older than 15 min to keep memory bounded
         cutoff = time.time() - 900
         stale = [mid for mid, m in _pending_messages.items() if m["ts"] < cutoff]
@@ -264,6 +284,25 @@ def _is_group_inactive() -> bool:
     """True if no group activity for _INACTIVITY_THRESHOLD_MINS minutes."""
     inactive_secs = time.time() - _last_group_activity
     return inactive_secs >= (_INACTIVITY_THRESHOLD_MINS * 60)
+
+
+def _is_discussion_active() -> bool:
+    """
+    Returns True if humans are actively chatting (3+ messages in the last 2 minutes).
+
+    When a real discussion is happening, TestAudit stays completely silent —
+    it only steps in when a question is genuinely unanswered and the
+    conversation has clearly paused. This ensures the human-first policy
+    is enforced at the detection level, not just per-message.
+    """
+    now    = time.time()
+    cutoff = now - _ACTIVE_DISCUSSION_WINDOW_SECS
+    with _pending_lock:
+        recent_count = sum(
+            1 for m in _pending_messages.values()
+            if m["ts"] >= cutoff
+        )
+    return recent_count >= _ACTIVE_DISCUSSION_MSGS
 
 
 def _can_post() -> bool:
@@ -355,15 +394,39 @@ def _should_reply_now() -> bool:
     return len(_replies_this_hour) < _MAX_REPLIES_PER_HR
 
 
-def _generate_smart_reply(message_text: str) -> str | None:
+def _generate_smart_reply(
+    message_text: str,
+    context: list[dict] | None = None,
+) -> str | None:
     """
     Generate a helpful, context-aware reply to an unanswered group message.
-    Only called when no human has replied after _REPLY_DELAY_SECS.
+    Only called when no human has replied after _REPLY_DELAY_SECS AND the
+    group is not in an active discussion.
+
+    context: optional list of recent messages ({"text", "ts", "user_id"})
+             injected so the AI understands the conversation before replying.
+
     Returns None if AI is unavailable or the message doesn't warrant a reply.
     """
     if not OPENROUTER_API_KEY:
         return None
     try:
+        # Build a conversation context block for richer, more accurate replies
+        context_block = ""
+        if context:
+            lines = [f"  [{i+1}] {c['text'][:200]}" for i, c in enumerate(context)]
+            context_block = (
+                "\n\nRecent conversation context (background only — reply to the UNANSWERED message below):\n"
+                + "\n".join(lines)
+                + "\n\nUNANSWERED message to reply to:"
+            )
+
+        user_content = (
+            f"{context_block}\n{message_text[:600]}"
+            if context_block
+            else f"Community message: {message_text[:600]}"
+        )
+
         r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -377,29 +440,32 @@ def _generate_smart_reply(message_text: str) -> str | None:
                         "role": "system",
                         "content": (
                             f"You are TestAudit, the Community Operations Manager of {BOT_NAME}, "
-                            "an AI-powered Telegram platform. "
-                            "A community member posted a message that no one has replied to yet. "
-                            "Your job: provide a warm, helpful, professional response.\n\n"
+                            "an AI-powered Telegram platform. You monitor the community group and "
+                            "step in ONLY when a message has been genuinely unanswered — never "
+                            "during active discussions.\n\n"
+                            "Your goal: make the member feel heard, supported, and welcomed.\n\n"
                             "Rules:\n"
+                            "- Read the full context before replying — understand the conversation thread\n"
                             "- Keep replies concise: 2-4 sentences max\n"
-                            "- Sound like a real human community manager — not a robot\n"
-                            "- If it's a feature/bot question → answer accurately and guide to private chat for personal use\n"
-                            "- If it's a general AI question → give a genuinely useful answer\n"
-                            "- If it's casual conversation or a statement → engage naturally and warmly\n"
-                            "- If the intent is unclear → ask a friendly clarifying question\n"
-                            "- Never reveal you are automated or say 'As an AI'\n"
-                            "- Do NOT add any signature or sign-off\n"
-                            "- Use emojis only when they feel natural, not decoratively\n"
-                            "- If the message is a greeting or spam, return exactly: SKIP"
+                            "- Sound like a real, warm human community manager — never robotic\n"
+                            "- Bot/feature questions → answer accurately, guide to private chat for personal use\n"
+                            "- AI/tech questions → give a genuinely useful, accurate answer\n"
+                            "- Casual conversation/statements → engage naturally and encourage discussion\n"
+                            "- Unclear intent → ask a friendly, focused clarifying question\n"
+                            "- Where appropriate, invite others in the community to weigh in\n"
+                            "- Never say 'As an AI' or reveal you are automated\n"
+                            "- No signature, no sign-off, no 'Best regards'\n"
+                            "- Emojis only when they feel natural — not decorative padding\n"
+                            "- Pure greetings, spam, or messages needing no reply → return exactly: SKIP"
                         ),
                     },
                     {
                         "role": "user",
-                        "content": f"Community message: {message_text[:600]}",
+                        "content": user_content,
                     },
                 ],
-                "max_tokens": 160,
-                "temperature": 0.72,
+                "max_tokens": 180,
+                "temperature": 0.70,
             },
             timeout=18,
         )
@@ -438,13 +504,20 @@ def _post_reply_to_group(text: str, reply_to_message_id: int) -> bool:
 def _check_unanswered_messages() -> None:
     """
     Human-first smart reply logic:
-    1. Find messages that have been unanswered for _REPLY_DELAY_SECS.
-    2. Skip anything already replied by a human, too old, or rate-limited.
-    3. Generate an AI reply and post it as a threaded reply.
+    1. Bail immediately if humans are actively discussing (3+ messages in 2 min).
+    2. Find messages unanswered for _REPLY_DELAY_SECS.
+    3. Skip anything already replied by a human, too old, or rate-limited.
+    4. Generate a context-aware AI reply and post it as a threaded reply.
 
     Processes at most ONE message per 30-second cycle to avoid flooding.
     """
     if not _should_reply_now():
+        return
+
+    # Human-first: if a live discussion is happening, stay completely silent.
+    # TestAudit only steps in when the conversation has genuinely paused.
+    if _is_discussion_active():
+        log.debug("community_manager: active discussion in progress — TestAudit holding back")
         return
 
     now = time.time()
@@ -472,7 +545,12 @@ def _check_unanswered_messages() -> None:
     if not _should_reply_now():
         return
 
-    reply = _generate_smart_reply(text)
+    # Collect recent conversation context for a more informed, accurate reply.
+    # Exclude the candidate message itself (already the subject of the reply).
+    ctx = [c for c in list(_recent_message_context) if c.get("text", "") != text]
+    ctx = ctx[-_CONTEXT_MESSAGES_FOR_REPLY:]  # keep only the most recent N
+
+    reply = _generate_smart_reply(text, context=ctx or None)
     if not reply:
         return
 

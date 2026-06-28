@@ -440,24 +440,20 @@ def _try_ai_content(category: str) -> dict | None:
 
 
 def _post_to_channel(text: str) -> int | None:
-    """Send post to channel. Returns message_id on success."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+    """
+    Send post EXCLUSIVELY to the channel.
+    Uses services.messaging.send_channel_post() — routed to CHANNEL only.
+    This function MUST NEVER send to the group or any private chat.
+    """
+    if not TELEGRAM_CHANNEL_ID:
         return None
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id":    TELEGRAM_CHANNEL_ID,
-                "text":       text,
-                "parse_mode": "HTML",
-            },
-            timeout=15,
-        )
-        if r.status_code == 200:
-            msg_id = r.json().get("result", {}).get("message_id")
+        from services.messaging import send_channel_post
+        result = send_channel_post(text)
+        if result:
+            msg_id = result.get("message_id")
             log.info("Channel Manager posted content (msg_id=%s)", msg_id)
             return msg_id
-        log.warning("channel_manager post HTTP %d: %s", r.status_code, r.text[:80])
     except Exception as exc:
         log.warning("channel_manager._post_to_channel: %s", exc)
     return None

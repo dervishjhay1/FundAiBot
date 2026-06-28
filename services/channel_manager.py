@@ -293,6 +293,163 @@ _CONTENT_LIBRARY: list[dict] = [
             f"Upgrade with /subscribe · Questions? Just ask! 👇"
         ),
     },
+    # ── FAQ ────────────────────────────────────────────────────────────────────
+    {
+        "category": "faq",
+        "title": "FAQ: How many messages per day?",
+        "text": (
+            "❓ <b>FAQ: How many messages do I get per day?</b>\n\n"
+            f"Your daily allowance on {BOT_NAME}:\n\n"
+            "🆓 <b>Free:</b> 30 AI chats · 5 image generations\n"
+            "⭐ <b>Basic VIP:</b> 500 chats · 50 images\n"
+            "💎 <b>Pro VIP:</b> 2,000 chats · 100 images\n"
+            "🚀 <b>Elite VIP:</b> Unlimited chats · 200 images\n\n"
+            "All limits reset every day at midnight UTC.\n"
+            "Upgrade anytime with <code>/subscribe</code> in the private bot chat.\n\n"
+            "Referrals earn bonus credits — share your link with <code>/refer</code>.\n\n"
+            f"📌 <i>{BOT_NAME} — Questions? Ask us in the community group</i>"
+        ),
+    },
+    {
+        "category": "faq",
+        "title": "FAQ: Which AI model does FundzAiBot use?",
+        "text": (
+            "❓ <b>FAQ: Which AI model powers the bot?</b>\n\n"
+            f"{BOT_NAME} uses a multi-model architecture:\n\n"
+            "🟢 <b>Default:</b> Google Gemma 3 27B\n"
+            "   Fast, free, and highly capable for everyday tasks\n\n"
+            "🔵 <b>Vision:</b> Gemini 1.5 Flash\n"
+            "   Powers image analysis, photo recognition, visual Q&A\n\n"
+            "🟣 <b>Fallback chain:</b> Llama 3.3 70B → Mistral Small 24B\n"
+            "   Switches automatically if the primary model is busy\n\n"
+            "All models are available at no extra cost to free users.\n"
+            "Use <code>/model</code> in private chat to see your current model.\n\n"
+            f"📌 <i>{BOT_NAME} — Always using the best available model</i>"
+        ),
+    },
+    {
+        "category": "faq",
+        "title": "FAQ: Is my data private?",
+        "text": (
+            "❓ <b>FAQ: Is my data private and secure?</b>\n\n"
+            f"{BOT_NAME} is designed with your privacy in mind:\n\n"
+            "✅ Conversations are NOT permanently stored\n"
+            "✅ Chat history clears with <code>/clear</code>\n"
+            "✅ We never sell your data to third parties\n"
+            "✅ Your Telegram ID is used only to manage your account\n"
+            "✅ All AI API calls are made server-side — your tokens stay private\n\n"
+            "For maximum privacy during sensitive sessions, use <code>/clear</code> "
+            "after each conversation.\n\n"
+            f"📌 <i>{BOT_NAME} — Your privacy matters to us</i>"
+        ),
+    },
+    # ── Ecosystem Updates ──────────────────────────────────────────────────────
+    {
+        "category": "ecosystem_update",
+        "title": "AI Ecosystem 2026 Update",
+        "text": (
+            "🌐 <b>AI Ecosystem Update — 2026</b>\n\n"
+            "The AI landscape is evolving faster than ever:\n\n"
+            "📌 <b>OpenAI</b> — GPT-4o processes video and audio natively\n"
+            "📌 <b>Google</b> — Gemini 1.5 handles multi-million token contexts\n"
+            "📌 <b>Anthropic</b> — Claude 3.5 Sonnet leads coding benchmarks\n"
+            "📌 <b>Meta</b> — Llama 3.3 is the strongest open-source model to date\n"
+            "📌 <b>Mistral</b> — Compact models are closing the gap fast\n\n"
+            "The trend: models are faster, cheaper, and more capable every quarter. "
+            "Open-source is rapidly matching proprietary systems.\n\n"
+            "What AI development has surprised you most this year? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Keeping you ahead of the curve</i>"
+        ),
+    },
+    {
+        "category": "ecosystem_update",
+        "title": "AI Agents Are Here",
+        "text": (
+            "🤖 <b>The Age of AI Agents Has Arrived</b>\n\n"
+            "2026 is the year AI stopped just talking and started <b>doing</b>.\n\n"
+            "AI agents can now:\n"
+            "🔹 Browse the web and gather real-time information\n"
+            "🔹 Write, test, and deploy code autonomously\n"
+            "🔹 Schedule meetings and send emails on your behalf\n"
+            "🔹 Coordinate with other AI agents on complex multi-step tasks\n"
+            "🔹 Learn your preferences and adapt over time\n\n"
+            "The question isn't whether AI agents will change how we work — "
+            "it's whether you'll be the one directing them.\n\n"
+            "Which tasks would you most want an AI agent to handle? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Your AI operations partner</i>"
+        ),
+    },
+    # ── Community Highlights ───────────────────────────────────────────────────
+    {
+        "category": "community_highlight",
+        "title": "Community Spotlight",
+        "text": (
+            "🎉 <b>Community Spotlight</b>\n\n"
+            f"The {BOT_NAME} community continues to grow — and the quality of "
+            "questions, ideas, and conversations here is genuinely impressive.\n\n"
+            "What's happening in the community:\n\n"
+            "💬 Members exploring AI for content creation, automation, and research\n"
+            "🚀 Feature requests being reviewed and added to our development roadmap\n"
+            "🤝 Experienced members helping newcomers — exactly what this space is for\n\n"
+            "A reminder: there are no bad questions here. If you're wondering "
+            "about something, ask — someone will always be ready to help.\n\n"
+            "What would you like to see more of in this community? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Built with this community, for this community</i>"
+        ),
+    },
+    {
+        "category": "community_highlight",
+        "title": "Weekly Community Digest",
+        "text": (
+            "📊 <b>This Week in the Community</b>\n\n"
+            f"A quick digest of what's been happening in the {BOT_NAME} ecosystem:\n\n"
+            "🔸 <b>Top discussions:</b> Prompt engineering, AI model comparisons, automation\n"
+            "🔸 <b>Most-used commands:</b> /chat, /image, /style — thousands of sessions daily\n"
+            "🔸 <b>Trending topic:</b> Using AI agents for productivity and workflow automation\n"
+            "🔸 <b>Coming up:</b> New features being built based on your feedback\n\n"
+            "Every conversation in this group shapes what we build next. "
+            "Your feedback directly influences the roadmap.\n\n"
+            "What's the #1 improvement you'd love to see? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Community-driven AI platform</i>"
+        ),
+    },
+    # ── Weekly Summary ─────────────────────────────────────────────────────────
+    {
+        "category": "weekly_summary",
+        "title": "Weekly AI Roundup",
+        "text": (
+            "📅 <b>Weekly AI Roundup</b>\n\n"
+            "Quick summary of what's been happening in the AI world:\n\n"
+            "⚡ Model capabilities continue improving across all major providers\n"
+            "⚡ AI image quality has reached near-photorealistic levels\n"
+            "⚡ Voice AI is increasingly indistinguishable from human speech\n"
+            "⚡ More businesses are deploying AI agents for routine workflows\n"
+            "⚡ Open-source models are now competitive with proprietary systems\n\n"
+            "The pace of progress is extraordinary. The best strategy: stay curious, "
+            "keep experimenting, and use communities like this to stay sharp.\n\n"
+            "What was your biggest AI-related win this week? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Your AI intelligence hub</i>"
+        ),
+    },
+    # ── Announcements / Platform Updates ──────────────────────────────────────
+    {
+        "category": "announcement",
+        "title": "Platform Status and Updates",
+        "text": (
+            f"📣 <b>{BOT_NAME} — Platform Update</b>\n\n"
+            "Our systems are operating at full capacity. "
+            "Here's what's been improved recently:\n\n"
+            "✅ Response speed improvements across all AI models\n"
+            "✅ Image generation queue optimised for faster delivery\n"
+            "✅ Community Manager (TestAudit) upgraded with smarter conversation handling\n"
+            "✅ Channel content quality gate improved — only high-value posts are published\n"
+            "✅ Active discussion detection added — bot stays silent during live conversations\n\n"
+            "Your experience and reliability are our top priorities. "
+            "Report any issues directly in the community group.\n\n"
+            "What improvements would you like to see next? 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Always improving for you</i>"
+        ),
+    },
 ]
 
 
@@ -397,11 +554,16 @@ def _try_ai_content(category: str) -> dict | None:
         return None
     try:
         category_prompts = {
-            "ai_education": "Write an educational post explaining one specific AI concept in simple terms.",
-            "productivity":  "Write a practical productivity tip about using AI tools effectively.",
-            "tutorial":      f"Write a short tutorial tip for {BOT_NAME} Telegram bot users.",
-            "security":      "Write a concise cybersecurity awareness tip relevant to AI and Telegram users.",
-            "inspiration":   "Write an inspiring thought about human-AI collaboration.",
+            "ai_education":       "Write an educational post explaining one specific AI concept in simple terms. Include a practical example the reader can try immediately.",
+            "productivity":       "Write a practical, actionable productivity tip about using AI tools effectively in daily work. Be specific — generic advice is not useful.",
+            "tutorial":           f"Write a short tutorial tip for {BOT_NAME} Telegram bot users. Be specific about which command to use and what to expect.",
+            "security":           "Write a concise cybersecurity awareness tip relevant to AI and Telegram users. Give at least 2 specific, actionable steps the reader can take today.",
+            "inspiration":        "Write an inspiring, thought-provoking observation about human-AI collaboration and the future of work. Avoid clichés — say something genuinely insightful.",
+            "faq":                f"Write a clear, friendly answer to a common question about {BOT_NAME} or AI assistants. Format it as 'FAQ: [question]' with a direct, helpful answer.",
+            "ecosystem_update":   "Write a brief, accurate update about a recent development in the AI ecosystem (models, tools, or industry trends). Be specific and factual.",
+            "community_highlight": f"Write a warm community spotlight post celebrating the {BOT_NAME} community and encouraging participation. End with a genuine question.",
+            "weekly_summary":     "Write a weekly roundup of notable AI trends and developments relevant to Telegram bot users and AI enthusiasts. Keep it concise and genuinely informative.",
+            "announcement":       f"Write a professional platform status or improvement announcement for {BOT_NAME}. Focus on what benefits the user, not internal details.",
         }
         prompt = category_prompts.get(category, "Write an educational AI tip for a Telegram channel.")
         r = requests.post(
@@ -416,11 +578,19 @@ def _try_ai_content(category: str) -> dict | None:
                     {
                         "role": "system",
                         "content": (
-                            f"You are the content manager for {BOT_NAME}, an AI-powered Telegram platform. "
-                            "Write high-quality, educational Telegram channel posts. "
-                            "Posts should be 100-200 words, informative, well-structured, and end with a CTA. "
-                            "Use HTML formatting (bold with <b>, code with <code>). "
-                            f"Always end with: 📌 <i>{BOT_NAME} — [relevant tagline]</i>"
+                            f"You are TestAudit, the Content Manager for {BOT_NAME}, an AI-powered Telegram platform. "
+                            "Your job: publish high-quality, genuinely useful content to the official channel.\n\n"
+                            "Every post must meet these standards:\n"
+                            "• 100-220 words — substantial but not bloated\n"
+                            "• Clear headline and logical structure\n"
+                            "• Accurate — never fabricate facts or statistics\n"
+                            "• Professional but approachable — not corporate or cold\n"
+                            "• Educational — the reader must learn something genuinely useful\n"
+                            "• Ends with a clear CTA or engaging question\n"
+                            "• Uses HTML: <b>bold</b> for key points, <code>code</code> for commands\n"
+                            "• Starts with a relevant emoji and bold title\n"
+                            f"• Always ends with: 📌 <i>{BOT_NAME} — [specific, relevant tagline]</i>\n\n"
+                            "Never repeat generic AI platitudes. Make every post genuinely valuable."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -525,6 +695,8 @@ def _do_post() -> None:
     all_categories = [
         "ai_education", "productivity", "tutorial",
         "security", "inspiration", "feature", "telegram_tip",
+        "faq", "ecosystem_update", "community_highlight",
+        "weekly_summary", "announcement",
     ]
     available_cats = [c for c in all_categories if c != _last_category_posted]
     if not available_cats:

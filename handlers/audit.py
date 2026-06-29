@@ -1511,7 +1511,7 @@ def _render_dashboard(audit: dict) -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton("🧠 Health Score",   callback_data="audit:live_health"),
     ])
     rows.append([
-        InlineKeyboardButton("💬 Talk to TestAudit", callback_data="audit:exec_chat"),
+        InlineKeyboardButton("🏢 CEO Office",        callback_data="audit:ceo_office"),
         InlineKeyboardButton("🤖 Auto Mode",         callback_data="audit:autonomous_status"),
     ])
     action_row = [InlineKeyboardButton("🔄 Full Retest", callback_data="audit:retest")]
@@ -2585,6 +2585,81 @@ async def audit_callback(query, context, action: str) -> None:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
         except Exception as exc:
             await query.answer(f"Error: {exc}", show_alert=True)
+
+
+    # ── CEO Office (natural conversation with TestAudit) ──────────────────────
+    elif action == "ceo_office" or action.startswith("ceo_office:"):
+        await query.answer()
+        if action == "ceo_office":
+            text = (
+                "🏢 <b>CEO Office — TestAudit</b>\n\n"
+                "Welcome to the private command centre.\n\n"
+                "TestAudit is your full Operations Manager — ask anything: company "
+                "performance, strategy, new products, roadmap, or just have a real "
+                "conversation about where the company is going.\n\n"
+                "<b>Quick actions:</b>"
+            )
+            kbd = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "📊 Company status",
+                        callback_data="audit:ceo_office:How is the company today? Give me a complete operational brief.",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "📋 What did I miss?",
+                        callback_data="audit:ceo_office:I just got back. What happened while I was away and what needs my attention?",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🗺️ Roadmap advice",
+                        callback_data="audit:ceo_office:Based on current metrics and community feedback, what should we prioritise this month?",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🚀 New product brief",
+                        callback_data="audit:ceo_office:Let's build FundzMarket. Give me the full project brief.",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "💬 Exec Chat (data only)",
+                        callback_data="audit:exec_chat",
+                    ),
+                    InlineKeyboardButton("« Dashboard", callback_data="audit:dashboard"),
+                ],
+            ])
+            try:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=kbd)
+            except Exception:
+                pass
+        else:
+            # A CEO Office question was selected
+            question = action.split(":", 1)[1] if ":" in action else ""
+            if not question:
+                await query.answer("Invalid.", show_alert=True)
+                return
+            await query.answer("🏢 TestAudit is thinking…")
+            try:
+                from services.ceo_office import chat_with_ceo_office
+                response = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: chat_with_ceo_office(question)
+                )
+                if len(response) > 4000:
+                    response = response[:3900] + "\n…<i>(truncated)</i>"
+                kbd = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("🏢 CEO Office", callback_data="audit:ceo_office"),
+                        InlineKeyboardButton("« Dashboard",   callback_data="audit:dashboard"),
+                    ],
+                ])
+                await query.edit_message_text(response, parse_mode="HTML", reply_markup=kbd)
+            except Exception as exc:
+                log.error("ceo_office callback: %s", exc)
+                await query.answer(f"Error: {exc}", show_alert=True)
 
     else:
         await query.answer()

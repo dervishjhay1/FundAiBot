@@ -180,6 +180,39 @@ def build_morning_brief() -> str:
     else:
         lines.append("  ✅ All systems nominal — good day ahead")
 
+    # Fundz ecosystem status
+    try:
+        from services.product_registry import get_all_products
+        products = get_all_products()
+        active   = [p for p in products if p.get("status") == "active"]
+        beta     = [p for p in products if p.get("status") == "beta"]
+        planned  = [p for p in products if p.get("status") == "planned"]
+        lines.append("")
+        lines.append("<b>🏢 Fundz Ecosystem</b>")
+        for p in active:
+            lines.append(f"  🟢 {p['name']} — LIVE")
+        for p in beta:
+            lines.append(f"  🟡 {p['name']} — BETA")
+        for p in planned:
+            lines.append(f"  ⚪ {p['name']} — Planned")
+    except Exception:
+        pass
+
+    # Community intelligence (trending topics)
+    try:
+        from services.community_manager import get_community_insights
+        insights = get_community_insights(top_n=5)
+        if insights.get("total_topics_tracked", 0) > 0:
+            top_kw = ", ".join(
+                f"{t['keyword']} ({t['count']}x)"
+                for t in insights["top_topics"][:5]
+            )
+            lines.append("")
+            lines.append(f"<b>💬 Community Topics</b>")
+            lines.append(f"  {top_kw}")
+    except Exception:
+        pass
+
     lines.append("")
     lines.append("<i>TestAudit · Chief Operations Intelligence</i>")
     return "\n".join(lines)

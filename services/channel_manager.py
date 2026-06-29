@@ -3,9 +3,9 @@ FundzAiBot — Channel Manager (TestAudit role)
 
 Manages the official Telegram Channel on behalf of the company.
 
-Publishing cadence: approximately one high-quality post every 2–3 hours,
-distributed naturally across the active day (07:00–22:00 UTC) — targeting
-5–7 posts per day.
+Publishing cadence: one high-quality post every 30 minutes during active hours
+(07:00–22:00 UTC). Targeting 10–20 posts per day. Posts slow naturally at night
+(active-hours gate still applies).
 
 Every draft is scored for quality before publishing. Posts below the
 quality threshold are skipped. Category rotation is enforced so the feed
@@ -41,9 +41,9 @@ log = get_logger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-_POSTS_TARGET_MIN    = 5      # minimum posts per day
-_POSTS_TARGET_MAX    = 7      # maximum posts per day (1 post per ~2h over 15h window)
-_MIN_POST_GAP_MINS   = 120    # at least 2 hours between posts
+_POSTS_TARGET_MIN    = 10      # minimum posts per day
+_POSTS_TARGET_MAX    = 20      # maximum posts per day (1 post per ~2h over 15h window)
+_MIN_POST_GAP_MINS   = 30    # at least 2 hours between posts
 _ACTIVE_HOURS        = (7, 22) # only post between 07:00 and 22:00 UTC
 _CHECK_INTERVAL      = 1800   # check every 30 min
 _QUALITY_THRESHOLD   = 50     # minimum quality score (0-100) — below this, skip the post
@@ -294,8 +294,77 @@ _CONTENT_LIBRARY: list[dict] = [
             f"Upgrade with /subscribe · Questions? Just ask! 👇"
         ),
     },
-]
 
+    # Responsible AI
+    {
+        "category": "responsible_ai",
+        "title": "Using AI Ethically",
+        "text": (
+            "🤝 <b>Using AI Responsibly — A Practical Guide</b>\n\n"
+            "AI tools are powerful. With that power comes responsibility:\n\n"
+            "✅ <b>Fact-check AI outputs</b> — especially for medical, legal, or financial decisions\n"
+            "✅ <b>Don't share sensitive data</b> — no passwords, personal IDs, or private keys\n"
+            "✅ <b>Attribute AI work</b> — be transparent when AI helped you create something\n"
+            "✅ <b>Avoid bias amplification</b> — AI reflects training data, not truth\n"
+            "✅ <b>Respect others</b> — don't use AI to create harmful or deceptive content\n\n"
+            "Responsible AI use protects you, your work, and your community.\n\n"
+            f"📌 <i>{BOT_NAME} — AI you can trust</i>"
+        ),
+    },
+    # Bot guide
+    {
+        "category": "bot_guide",
+        "title": "Getting Started Guide",
+        "text": (
+            f"🚀 <b>New to {BOT_NAME}? Start Here</b>\n\n"
+            "Everything you need in 60 seconds:\n\n"
+            "1️⃣ <b>/start</b> — activate the bot and see your dashboard\n"
+            "2️⃣ <b>/chat</b> — start a conversation with memory\n"
+            "3️⃣ <b>/ask</b> — one-shot question, no memory needed\n"
+            "4️⃣ <b>/image</b> — generate AI images from text\n"
+            "5️⃣ <b>/style</b> — switch between 8 AI personalities\n"
+            "6️⃣ <b>/model</b> — choose GPT-4o, Gemini, or Claude\n"
+            "7️⃣ <b>/vip</b> — upgrade for higher limits\n"
+            "8️⃣ <b>/help</b> — full command reference\n\n"
+            f"That's it. {BOT_NAME} is designed to be simple and powerful.\n\n"
+            f"📌 <i>{BOT_NAME} — Start smart</i>"
+        ),
+    },
+    # Success story
+    {
+        "category": "success_story",
+        "title": "Community Win",
+        "text": (
+            "🏆 <b>Community Spotlight</b>\n\n"
+            "This week a community member shared how they used AI to cut their "
+            "weekly report writing from 3 hours to 20 minutes.\n\n"
+            "The approach: feed the AI your raw notes, ask it to structure them "
+            "as a professional report, then edit the output rather than writing from scratch.\n\n"
+            "The key insight: <b>AI as editor, human as director.</b>\n\n"
+            "What's a workflow you've transformed with AI? Share it — "
+            "your experience might be the tip someone else needs today. 👇\n\n"
+            f"📌 <i>{BOT_NAME} — Powered by the community</i>"
+        ),
+    },
+    # Release notes
+    {
+        "category": "release_notes",
+        "title": "Platform Updates",
+        "text": (
+            "📦 <b>Platform Updates</b>\n\n"
+            f"{BOT_NAME} is continuously improving based on your feedback.\n\n"
+            "Recent focus areas:\n"
+            "• ⚡ Faster response times across all AI models\n"
+            "• 🧠 Improved memory and context retention in /chat\n"
+            "• 🎨 Enhanced image generation quality\n"
+            "• 🔐 Stronger privacy controls for conversation data\n"
+            "• 📊 More detailed usage stats in /credits\n\n"
+            "Your feedback directly shapes what gets built. "
+            "Drop feature requests or bug reports in this group.\n\n"
+            f"📌 <i>{BOT_NAME} — Built by the community, for the community</i>"
+        ),
+    },
+]
 
 # ── Content quality gate ──────────────────────────────────────────────────────
 
@@ -585,8 +654,8 @@ def _do_post() -> None:
         action_type="send_channel_post",
         title="Post educational content to channel",
         description=(
-            "Scheduled channel content post — 1 post per 2-3 hours, "
-            f"targeting {_POSTS_TARGET_MIN}-{_POSTS_TARGET_MAX} posts/day."
+            "Scheduled channel content post — 1 post per 30 minutes, "
+            f"targeting {_POSTS_TARGET_MIN}–{_POSTS_TARGET_MAX} posts/day."
         ),
         payload={"channel_id": TELEGRAM_CHANNEL_ID},
         confidence=0.91,
@@ -602,6 +671,7 @@ def _do_post() -> None:
     all_categories = [
         "ai_education", "productivity", "tutorial",
         "security", "inspiration", "feature", "telegram_tip",
+        "responsible_ai", "bot_guide", "success_story", "release_notes",
     ]
     available_cats = [c for c in all_categories if c != _last_category_posted]
     if not available_cats:

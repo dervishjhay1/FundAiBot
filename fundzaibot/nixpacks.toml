@@ -1,9 +1,0 @@
-[phases.setup]
-nixPkgs = ["python311"]
-
-# No [phases.install] — Nixpacks auto-detects requirements.txt and installs it.
-# Overriding [phases.install] with custom cmds prevents Nixpacks from setting up
-# its own pip environment first, causing: /bin/bash: pip: command not found
-
-# Start command is defined in railway.json to keep Railway config centralised.
-# Do NOT add a [start] phase here — it would conflict with railway.json.

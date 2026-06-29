@@ -736,3 +736,370 @@ async def welcome_new_member(bot, member, chat) -> None:
 
     except Exception as exc:
         log.warning("welcome_new_member: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2 — Per-chat-id state management (multi-group architecture)
+#
+# The functions below extend the original single-group community manager into
+# a multi-group architecture. Every function accepts an explicit chat_id so
+# TestAudit can manage multiple groups simultaneously.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Per-chat state store ──────────────────────────────────────────────────────
+
+# {chat_id: {"messages": {msg_id: {...}}, "last_bot_post": float,
+#            "last_human": float, "last_proactive": float}}
+_chat_state:      dict[int, dict] = {}
+_chat_state_lock  = threading.Lock()
+
+
+def _get_chat(chat_id: int) -> dict:
+    """Return (or initialise) per-chat state dict. Caller must hold _chat_state_lock."""
+    if chat_id not in _chat_state:
+        _chat_state[chat_id] = {
+            "messages":      {},
+            "last_bot_post": 0.0,
+            "last_human":    time.time(),
+            "last_proactive":0.0,
+        }
+    return _chat_state[chat_id]
+
+
+# ── New-member welcome ────────────────────────────────────────────────────────
+
+def get_welcome_message(name: str) -> str:
+    """
+    Generate a warm, varied welcome message for a new group member.
+    Rotates between 4 natural variants so the community never sees a template.
+    """
+    variants = [
+        (
+            f"👋 Welcome to the community, <b>{name}!</b>\n\n"
+            "Great to have you here — this is a space for AI enthusiasts, "
+            "builders, and curious minds.\n\n"
+            "💡 Ask questions, share ideas, or just say hi. "
+            "For personal AI features (chat, image gen, VIP), open the bot in a private chat.\n\n"
+            "<i>— TestAudit · Community Ops Manager</i>"
+        ),
+        (
+            f"Hey <b>{name}</b>, welcome aboard! 🎉\n\n"
+            "We're building something meaningful here — a community around AI, "
+            "automation, and smarter ways to work. Happy to have you.\n\n"
+            "🤖 Private chat with the bot for personal AI features. "
+            "The group is for the community.\n\n"
+            "<i>— TestAudit</i>"
+        ),
+        (
+            f"Welcome, <b>{name}</b>! 👋\n\n"
+            "You've just joined a community of people using AI to build, learn, and grow. "
+            "Feel free to jump into any conversation — no lurking required.\n\n"
+            "<i>— TestAudit · Community Ops Manager</i>"
+        ),
+        (
+            f"Great timing, <b>{name}</b> — welcome! 🤝\n\n"
+            "This community is full of people thinking seriously about AI and where it's going. "
+            "Hope you find the conversations valuable.\n\n"
+            "Got questions? Drop them here. Looking for personal AI features? "
+            "The bot's private chat is the place.\n\n"
+            "<i>— TestAudit</i>"
+        ),
+    ]
+    return random.choice(variants)
+
+
+# ── Group posting & activity recording ───────────────────────────────────────
+
+def record_group_post(chat_id: int) -> None:
+    """Record that TestAudit (the bot) just posted in a group chat."""
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        cs["last_bot_post"] = time.time()
+
+
+def record_human_activity(chat_id: int) -> None:
+    """Record human activity in a chat (resets silence/engagement timers)."""
+    global _last_group_activity
+    _last_group_activity = time.time()
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        cs["last_human"] = time.time()
+
+
+# ── Smart reply infrastructure ────────────────────────────────────────────────
+
+def register_message(
+    chat_id:    int,
+    message_id: int,
+    text:       str,
+    username:   str = "there",
+) -> None:
+    """
+    Register an actionable group message for smart-reply monitoring.
+    Automatically purges messages older than 15 minutes.
+    """
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        cs["messages"][message_id] = {
+            "text":     text,
+            "username": username,
+            "ts":       time.time(),
+            "replied":  False,
+        }
+        # Bounded memory: purge messages older than 15 min
+        cutoff = time.time() - 900
+        cs["messages"] = {
+            mid: m for mid, m in cs["messages"].items() if m["ts"] >= cutoff
+        }
+
+
+def mark_replied(chat_id: int, message_id: int | None = None) -> None:
+    """
+    Mark a specific message as answered by a human.
+    If message_id is None, mark ALL recent messages in the chat as answered
+    (used when a human posts a top-level message — the conversation is active).
+    """
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        if message_id is None:
+            for m in cs["messages"].values():
+                m["replied"] = True
+        elif message_id in cs["messages"]:
+            cs["messages"][message_id]["replied"] = True
+
+
+def is_actionable_message(text: str) -> bool:
+    """
+    Returns True if the text looks like a question or help request that
+    TestAudit should monitor for potential smart-reply.
+
+    Simple keyword heuristic — fast, no AI, no network calls.
+    """
+    text_lower = text.lower()
+    signals = [
+        "?", "how", "what", "why", "when", "where", "who", "which",
+        "can you", "could you", "would you",
+        "help", "assist", "support",
+        "issue", "problem", "error", "bug",
+        "broken", "not working", "doesn't work", "won't work",
+        "how do i", "how to", "is it possible", "any way",
+        "does it", "how much", "anyone know", "does anyone",
+        "is there a way",
+    ]
+    return any(s in text_lower for s in signals)
+
+
+def get_unanswered_messages(chat_id: int) -> list[dict]:
+    """
+    Return unanswered messages for a chat, oldest first.
+    Each item: {"id": int, "text": str, "ts": float, "username": str}
+    """
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        unanswered = [
+            {
+                "id":       mid,
+                "text":     m["text"],
+                "ts":       m["ts"],
+                "username": m.get("username", "there"),
+            }
+            for mid, m in cs["messages"].items()
+            if not m["replied"]
+        ]
+    return sorted(unanswered, key=lambda x: x["ts"])
+
+
+def can_post_in_group(chat_id: int, min_gap: int = 90) -> bool:
+    """
+    Return True if TestAudit is allowed to post in this chat.
+    Enforces a minimum cooldown (default 90 sec) between bot messages.
+    """
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        elapsed = time.time() - cs["last_bot_post"]
+    return elapsed >= min_gap
+
+
+def seconds_silent(chat_id: int) -> float:
+    """Return seconds since the last human message in this chat."""
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        return time.time() - cs["last_human"]
+
+
+# ── Reply interjections ───────────────────────────────────────────────────────
+
+_SUPPORT_INTERJECTIONS: list[str] = [
+    "Happy to help! ",
+    "I can answer that — ",
+    "Good question! ",
+    "Jumping in here — ",
+    "Quick note: ",
+    "Let me help with that — ",
+    "Sure! ",
+    "",   # no prefix — most natural
+    "",
+    "",   # weighted toward no prefix
+]
+
+
+def get_support_interjection() -> str:
+    """Return a randomised natural prefix for TestAudit replies."""
+    return random.choice(_SUPPORT_INTERJECTIONS)
+
+
+# ── Proactive engagement ──────────────────────────────────────────────────────
+
+_PROACTIVE_SILENCE_SECS   = 3600    # engage only after 1h of silence
+_PROACTIVE_COOLDOWN_SECS  = 7200    # max 1 proactive message per 2h per chat
+
+_ENGAGEMENT_PROMPTS: list[str] = [
+    (
+        "💭 What's everyone working on this week? "
+        "Share your current project or challenge — always interesting to hear "
+        "what the community is building."
+    ),
+    (
+        "🔮 Quick question for the group: what AI tool has genuinely surprised "
+        "you recently? Not hype — actually useful."
+    ),
+    (
+        "🛠️ What's one task you've automated with AI that you thought "
+        "would take forever to set up? Drop it below."
+    ),
+    (
+        "🧠 Let's do a quick brain share — what's the hardest thing about "
+        "using AI effectively in your workflow right now?"
+    ),
+    (
+        "💡 Open floor: any AI tips, tricks, or prompt techniques you've "
+        "discovered that the rest of us might not know?"
+    ),
+    (
+        "📊 Community question: are you using AI more for creative work, "
+        "technical work, or somewhere in between?"
+    ),
+    (
+        "🚀 If you could add one feature to your favourite AI tool tomorrow, "
+        "what would it be?"
+    ),
+    (
+        "🤔 What's a common AI misconception you keep having to correct for "
+        "people around you?"
+    ),
+    (
+        "📖 Has anyone read or watched anything about AI recently that "
+        "genuinely changed how you think about it?"
+    ),
+    (
+        "⚡ Quick share: what's the most time you've saved in a single task "
+        "by using AI? Curious to hear the extremes."
+    ),
+    (
+        "🔐 Privacy question: how much do you think about what data you share "
+        "with AI tools? Curious where the community stands."
+    ),
+    (
+        "🎯 Let's benchmark: what's one thing AI still can't do reliably that "
+        "you wish it could?"
+    ),
+    (
+        "🌍 How has your use of AI tools changed over the past year? "
+        "More tools, fewer tools, or just different ones?"
+    ),
+]
+
+_TIME_GREETINGS: dict[str, str] = {
+    "morning": (
+        "🌅 Good morning, everyone! Hope the day's off to a great start. "
+        "What are you working on today?"
+    ),
+    "afternoon": (
+        "☀️ Good afternoon! Busy day? Drop your wins or challenges below — "
+        "the community thrives on real talk."
+    ),
+    "evening": (
+        "🌙 Good evening, all. How was the day? "
+        "Any AI insights or builds worth sharing before signing off?"
+    ),
+}
+
+_last_time_greeting: str = ""
+
+
+def get_time_greeting() -> str | None:
+    """
+    Return a time-appropriate greeting if one hasn't been sent in this period.
+    Returns None outside active hours or if already sent in this period.
+    """
+    global _last_time_greeting
+    hour = datetime.now(timezone.utc).hour
+    if 6 <= hour < 12:
+        key = "morning"
+    elif 12 <= hour < 18:
+        key = "afternoon"
+    elif 18 <= hour < 23:
+        key = "evening"
+    else:
+        return None
+
+    if _last_time_greeting == key:
+        return None
+    _last_time_greeting = key
+    return _TIME_GREETINGS[key]
+
+
+def get_engagement_prompt() -> str:
+    """Return a random community engagement prompt."""
+    return random.choice(_ENGAGEMENT_PROMPTS)
+
+
+def can_engage_proactively(chat_id: int) -> bool:
+    """
+    Return True if TestAudit may send a proactive engagement message.
+    Conditions: group has been silent for _PROACTIVE_SILENCE_SECS AND
+    we haven't sent a proactive message in the last _PROACTIVE_COOLDOWN_SECS.
+    """
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        silence       = time.time() - cs["last_human"]
+        since_proactive = time.time() - cs["last_proactive"]
+    return silence >= _PROACTIVE_SILENCE_SECS and since_proactive >= _PROACTIVE_COOLDOWN_SECS
+
+
+def record_proactive_engagement(chat_id: int) -> None:
+    """Record that TestAudit just sent a proactive engagement message."""
+    with _chat_state_lock:
+        cs = _get_chat(chat_id)
+        cs["last_proactive"] = time.time()
+
+
+# ── AI system prompt for group replies ────────────────────────────────────────
+
+def build_community_manager_system_prompt() -> str:
+    """
+    Build the system prompt for TestAudit's community manager AI persona.
+    Used when TestAudit responds to @mentions or unanswered questions in groups.
+    """
+    return (
+        f"You are TestAudit, the Community Operations Manager for {BOT_NAME}, "
+        "an AI-powered Telegram platform. "
+        "You operate as a real, human community manager — "
+        "professional, warm, helpful, and concise.\n\n"
+        "Your role in this group:\n"
+        "- Answer questions about AI, productivity, and the bot's features accurately\n"
+        "- Facilitate good discussions and keep conversations constructive\n"
+        "- Welcome and support community members in a natural, human way\n"
+        "- Provide genuinely useful information — not marketing copy\n\n"
+        "Rules (strictly enforced):\n"
+        "- Keep replies SHORT: 2-4 sentences max for group messages\n"
+        "- Sound human — not robotic, overly formal, or like a press release\n"
+        "- For bot or feature questions: answer accurately and point to private chat for personal use\n"
+        "- For general AI questions: give a genuinely useful, honest answer\n"
+        "- For casual conversation: engage naturally and warmly\n"
+        "- For unclear messages: ask a friendly clarifying question\n"
+        "- NEVER say 'As an AI' or reveal you are automated\n"
+        "- No signature lines — you're a community manager talking naturally\n"
+        "- Use emojis only when they feel genuinely appropriate, not decoratively\n"
+        "- If the message is spam or irrelevant, return only: SKIP"
+    )

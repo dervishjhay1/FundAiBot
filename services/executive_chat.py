@@ -38,20 +38,31 @@ from utils.logger import get_logger
 log = get_logger(__name__)
 
 _SYSTEM_PROMPT = f"""\
-You are TestAudit, the Chief Operations & Executive Intelligence Manager of {BOT_NAME}.
-You are speaking directly with the CEO (the company owner).
+You are TestAudit, the permanent Operations Manager of the entire Fundz Company.
 
-Your role is to answer the CEO's questions about the company using ONLY the real metrics
-and context provided to you. You are professional, honest, calm, and evidence-driven.
+You manage every Fundz product — not just {BOT_NAME}. The Fundz ecosystem includes
+FundzAiBot, FundzMarket, Fundz Academy, and any future products approved by the CEO.
+You are speaking directly with the CEO (the company founder and owner).
 
-Rules:
-- Answer based ONLY on the data provided in the context. Never invent statistics.
-- If you don't have enough data to answer confidently, say so honestly.
+Your role:
+- Answer the CEO's questions using ONLY the real metrics and context provided.
+- Advise on the entire Fundz ecosystem — products, growth, operations, community.
+- When the CEO discusses a new product idea: prepare a structured business proposal
+  covering purpose, features, target audience, phases, dependencies, and integration
+  with existing Fundz products. State clearly that development needs CEO approval.
+- When asked about cross-product opportunities: identify relevant connections between
+  FundzAiBot users, FundzMarket, Fundz Academy, and future products.
+- When asked about community insights: use the COMMUNITY_HOT_TOPICS data to recommend
+  content, features, or product improvements the community is signalling.
+
+Conduct rules:
+- Answer based ONLY on data in the context. Never invent statistics.
+- If you don't have enough data to answer, say so honestly.
 - Be concise but thorough. Use bullet points where helpful.
 - Never be emotional, never flatter the CEO.
 - Format with HTML bold/italic tags for Telegram display.
 - Always end with 1-2 specific, actionable recommendations.
-- Maximum response: 400 words.
+- Maximum response: 450 words.
 - Refer to yourself as "TestAudit" and to the owner as "CEO".
 """
 
@@ -188,6 +199,28 @@ def _build_company_context() -> str:
                 for m in memory
             )
             context_parts.append(f"RECENT_EVENTS: {mem_str}")
+    except Exception:
+        pass
+
+    # Product registry (Fundz ecosystem overview)
+    try:
+        from services.product_registry import format_registry_summary
+        context_parts.append(format_registry_summary())
+    except Exception:
+        context_parts.append("FUNDZ_ECOSYSTEM: unavailable")
+
+    # Community intelligence (trending topics from group discussions)
+    try:
+        from services.community_manager import get_community_insights
+        insights = get_community_insights(top_n=5)
+        if insights["total_topics_tracked"] > 0:
+            top = ", ".join(
+                f"{t['keyword']} ({t['count']}x)"
+                for t in insights["top_topics"][:5]
+            )
+            context_parts.append(f"COMMUNITY_HOT_TOPICS: {top}")
+        else:
+            context_parts.append("COMMUNITY_HOT_TOPICS: no data yet")
     except Exception:
         pass
 

@@ -255,10 +255,40 @@ def bootstrap_departments() -> None:
         stop_fn=stop_feature_tracker,
     )
 
+    # Product Intelligence (Fundz Ecosystem Registry)
+    from services.product_registry import initialize as _init_product_registry
+
+    def _product_status() -> dict:
+        try:
+            from services.product_registry import get_all_products
+            all_p   = get_all_products()
+            active  = [p["name"] for p in all_p if p.get("status") == "active"]
+            planned = [p["name"] for p in all_p if p.get("status") == "planned"]
+            return {
+                "total_products":   len(all_p),
+                "active_products":  active,
+                "planned_products": planned,
+            }
+        except Exception:
+            return {"total_products": 0}
+
+    register(
+        name="Product Intelligence",
+        role="Fundz Ecosystem Product Registry & Roadmap Manager",
+        description=(
+            "Central registry for every Fundz product. "
+            "Tracks FundzAiBot, FundzMarket, Fundz Academy, and any CEO-approved products. "
+            "Feeds multi-product content to Channel Manager and product context to CEO reports. "
+            "CEO registers new products via /testaudit without requiring code changes."
+        ),
+        start_fn=_init_product_registry,
+        status_fn=_product_status,
+    )
+
     # Start all registered departments
     start_all_departments()
 
     log.info(
-        "🏢 FundzAiBot AI Company initialized — %d departments active",
+        "🏢 Fundz Company initialized — %d AI departments active",
         len(_departments),
     )

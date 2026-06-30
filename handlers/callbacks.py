@@ -113,6 +113,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
+    # ── CEO Office session callbacks ──────────────────────────────────────────
+    if data.startswith("ceo:"):
+        if not admin:
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+        action = data[len("ceo:"):]
+
+        if action == "exit":
+            from handlers.ceo_office import end_ceo_session, is_ceo_session_active
+            if is_ceo_session_active(user.id):
+                end_ceo_session(user.id)
+                await query.answer("CEO Office closed.")
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                await context.bot.send_message(
+                    user.id,
+                    "👋 <b>CEO Office closed.</b>\n\n"
+                    "Use /ceo_office or /testaudit → CEO Office to return.",
+                    parse_mode="HTML",
+                )
+            else:
+                await query.answer("No active CEO Office session.")
+            return
+
+        if action == "open":
+            from handlers.ceo_office import start_ceo_session, ceo_office_command_handler
+            start_ceo_session(user.id)
+            await query.answer("CEO Office opened.")
+            await ceo_office_command_handler(update, context)
+            return
+
+        await query.answer()
+        return
+
     # ── Enterprise Audit Center (/testaudit callbacks) ────────────────────────
     if data.startswith("audit:"):
         if not admin:

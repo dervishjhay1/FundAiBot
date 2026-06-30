@@ -66,6 +66,7 @@ from handlers.retouch import photo_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
+from handlers.ceo_office import ceo_office_command_handler
 from handlers.group import (
     new_member_handler,
     testaudit_mention_handler,
@@ -168,6 +169,7 @@ async def post_init(application: Application) -> None:
         BotCommand("testbroadcast",     "👁️ Preview active announcement"),
         BotCommand("pin",               "📌 Create announcement"),
         BotCommand("announce_both",     "📣 Push to channel + group"),
+        BotCommand("ceo_office",        "🏢 Open CEO Office (TestAudit)"),
     ]
 
     # Set public list for everyone
@@ -197,6 +199,35 @@ async def post_init(application: Application) -> None:
     log.info("Channel publisher background task started.")
     asyncio.create_task(run_group_engagement_scheduler(application.bot))
     log.info("Group engagement scheduler background task started.")
+
+    # ── Phase 2: Enterprise Intelligence Services ─────────────────────────────
+    try:
+        from services.ceo_office import initialize as ceo_office_initialize
+        ceo_office_initialize()
+        log.info("CEO Office initialized (memory + history restored).")
+    except Exception as exc:
+        log.warning("CEO Office init warning: %s", exc)
+
+    try:
+        from services.testaudit_core import start_testaudit_core
+        start_testaudit_core()
+        log.info("TestAudit intelligence core started.")
+    except Exception as exc:
+        log.warning("TestAudit core start warning: %s", exc)
+
+    try:
+        from services.executive_assistant import start_executive_assistant
+        start_executive_assistant()
+        log.info("Executive Assistant scheduler started.")
+    except Exception as exc:
+        log.warning("Executive Assistant start warning: %s", exc)
+
+    try:
+        from services.autonomous_mode import start_autonomous_mode_monitor
+        start_autonomous_mode_monitor()
+        log.info("Autonomous Operations Mode monitor started.")
+    except Exception as exc:
+        log.warning("Autonomous Mode start warning: %s", exc)
 
     mark_ready()
     log.info("Bot fully initialised — polling active.")
@@ -369,6 +400,9 @@ def build_app() -> Application:
     # ── Enterprise audit center (admin only) ──────────────────────────────────
     app.add_handler(CommandHandler("status",             status_handler))
     app.add_handler(CommandHandler("testaudit",          testaudit_handler))
+
+    # ── CEO Office (Phase 2) ──────────────────────────────────────────────────
+    app.add_handler(CommandHandler("ceo_office",         ceo_office_command_handler))
 
     # ── Announcements ─────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pin",                pin_handler))

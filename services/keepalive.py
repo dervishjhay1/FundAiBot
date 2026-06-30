@@ -369,6 +369,37 @@ def run_flask() -> None:
 _keepalive_thread: threading.Thread | None = None
 
 
+@app.route("/api/telegram")
+def api_telegram():
+    """
+    Live diagnostic: calls Telegram getMe + getWebhookInfo to confirm the bot
+    is authenticated and show whether a webhook is active.
+    Only available while the process is running; token is never exposed.
+    """
+    try:
+        from config.settings import TELEGRAM_BOT_TOKEN
+        import urllib.request, json as _json
+
+        def _tg(method: str):
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+            with urllib.request.urlopen(url, timeout=8) as r:
+                return _json.loads(r.read())
+
+        me = _tg("getMe").get("result", {})
+        wh = _tg("getWebhookInfo").get("result", {})
+        return jsonify({
+            "bot_username":    me.get("username"),
+            "bot_id":          me.get("id"),
+            "webhook_url":     wh.get("url", ""),
+            "webhook_active":  bool(wh.get("url")),
+            "pending_updates": wh.get("pending_update_count", 0),
+            "bot_ready":       _bot_ready,
+            "uptime_seconds":  _uptime(),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 def start_keepalive() -> threading.Thread:
     """
     Start the Flask keep-alive thread (idempotent — safe to call multiple times).

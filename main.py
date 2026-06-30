@@ -539,6 +539,25 @@ def main() -> None:
     start_keepalive()
     start_vip_scheduler()
 
+    # ── Explicitly delete any active Telegram webhook before polling ──────────
+    # If a webhook is set (from any previous deployment or misconfiguration),
+    # Telegram sends updates to that URL and getUpdates returns nothing.
+    # We force-delete it here so polling always wins, regardless of prior state.
+    try:
+        import requests as _req
+        _wh_resp = _req.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook",
+            json={"drop_pending_updates": False},
+            timeout=10,
+        )
+        _wh_data = _wh_resp.json()
+        if _wh_data.get("result"):
+            log.info("✅ Webhook deleted — Telegram polling mode confirmed.")
+        else:
+            log.warning("deleteWebhook response: %s", _wh_data)
+    except Exception as _exc:
+        log.warning("Could not delete Telegram webhook (non-fatal): %s", _exc)
+
     app = build_app()
     log.info("Starting Telegram polling — Railway-only production instance.")
     app.run_polling(

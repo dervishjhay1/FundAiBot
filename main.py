@@ -193,12 +193,21 @@ async def post_init(application: Application) -> None:
     await queue_manager.start()
 
     # ── Background services ───────────────────────────────────────────────────
-    from services.channel_publisher import run_channel_publisher
-    from services.dm_operations import run_group_engagement_scheduler
-    asyncio.create_task(run_channel_publisher(application.bot))
-    log.info("Channel publisher background task started.")
-    asyncio.create_task(run_group_engagement_scheduler(application.bot))
-    log.info("Group engagement scheduler background task started.")
+    # Each import is isolated in its own try/except so a single broken service
+    # can NEVER crash post_init and take the entire bot down.
+    try:
+        from services.channel_publisher import run_channel_publisher
+        asyncio.create_task(run_channel_publisher(application.bot))
+        log.info("Channel publisher background task started.")
+    except Exception as exc:
+        log.error("Channel publisher failed to start (bot continues): %s", exc)
+
+    try:
+        from services.dm_operations import run_group_engagement_scheduler
+        asyncio.create_task(run_group_engagement_scheduler(application.bot))
+        log.info("Group engagement scheduler background task started.")
+    except Exception as exc:
+        log.error("Group engagement scheduler failed to start (bot continues): %s", exc)
 
     # ── Phase 2: Enterprise Intelligence Services ─────────────────────────────
     try:

@@ -1103,3 +1103,201 @@ def build_community_manager_system_prompt() -> str:
         "- Use emojis only when they feel genuinely appropriate, not decoratively\n"
         "- If the message is spam or irrelevant, return only: SKIP"
     )
+
+
+# ── Channel publishing support ─────────────────────────────────────────────────
+# These functions are used by services/channel_publisher.py.
+# They track channel-specific post state separately from group state.
+
+_channel_posts_today: int = 0
+_channel_posts_date: str = ""
+_last_channel_post_ts: float = 0.0
+_channel_state_lock = threading.Lock()
+
+_CONTENT_ROTATION = [
+    "insight", "tip", "question", "market_update", "motivational",
+    "case_study", "news", "strategy", "tool_spotlight", "community_highlight",
+]
+
+_FALLBACK_POSTS: dict[str, str] = {
+    "insight": (
+        "💡 <b>AI Insight of the Day</b>\n\n"
+        "The most powerful AI applications are those that solve real problems "
+        "for real people. As we build with AI, the focus should always be on "
+        "impact — not just innovation.\n\n"
+        "What problem are you solving with AI today?\n\n— <i>FundzAiBot Community</i>"
+    ),
+    "tip": (
+        "🎯 <b>Quick AI Tip</b>\n\n"
+        "When prompting AI, be specific. Vague questions get vague answers. "
+        "The more context you provide, the more useful the output.\n\n"
+        "<i>Try adding 'with examples' or 'in simple terms' to your next prompt.</i>\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+    "question": (
+        "🤔 <b>Thought of the Day</b>\n\n"
+        "How has AI changed the way you work or think this week?\n\n"
+        "Drop your thoughts in the community — we'd love to hear your perspective.\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+    "market_update": (
+        "📊 <b>AI Market Pulse</b>\n\n"
+        "The AI industry evolves rapidly. New models, new capabilities, "
+        "new use cases — the landscape changes daily.\n\n"
+        "Stay curious, stay informed, and stay ahead.\n\n— <i>FundzAiBot Community</i>"
+    ),
+    "motivational": (
+        "🚀 <b>Keep Going</b>\n\n"
+        "Building with AI is a marathon, not a sprint. Every experiment, "
+        "every failure, every small win is moving you forward.\n\n"
+        "The builders who succeed are the ones who stay consistent.\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+    "case_study": (
+        "📖 <b>Real-World AI</b>\n\n"
+        "Businesses that integrate AI thoughtfully — not just for the hype — "
+        "are seeing genuine productivity gains and cost savings.\n\n"
+        "The key word is <i>thoughtfully</i>. AI amplifies good processes and "
+        "exposes bad ones.\n\n— <i>FundzAiBot Community</i>"
+    ),
+    "news": (
+        "📰 <b>AI This Week</b>\n\n"
+        "The pace of AI development continues to accelerate. Models are getting "
+        "faster, cheaper, and more capable.\n\n"
+        "What matters most is not which model wins — it's how you use the tools "
+        "available to you right now.\n\n— <i>FundzAiBot Community</i>"
+    ),
+    "strategy": (
+        "🧭 <b>AI Strategy</b>\n\n"
+        "The best AI strategy isn't about using every tool — it's about "
+        "identifying where AI creates real leverage in your specific context.\n\n"
+        "Start small, measure everything, and scale what works.\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+    "tool_spotlight": (
+        "🔦 <b>Tool Spotlight</b>\n\n"
+        "FundzAiBot gives you access to multiple AI models — GPT-4o, Claude, "
+        "Gemini — all in one place. Switch models with /model to find the one "
+        "that fits your workflow best.\n\n"
+        "Try the private chat for deep research and analysis.\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+    "community_highlight": (
+        "🌟 <b>Community Highlight</b>\n\n"
+        "This community exists because curious, driven people like you show up "
+        "every day to learn and share.\n\n"
+        "Thank you for being part of the FundzAiBot community. "
+        "Your questions and discussions make this better for everyone.\n\n"
+        "— <i>FundzAiBot Community</i>"
+    ),
+}
+
+
+def _reset_channel_day() -> None:
+    """Reset channel post counter if it's a new UTC day (call under _channel_state_lock)."""
+    global _channel_posts_today, _channel_posts_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _channel_posts_date != today:
+        _channel_posts_today = 0
+        _channel_posts_date = today
+
+
+def get_channel_post_today() -> int:
+    """Return number of channel posts published today (UTC day)."""
+    with _channel_state_lock:
+        _reset_channel_day()
+        return _channel_posts_today
+
+
+def record_channel_post() -> None:
+    """Increment the daily channel post counter and record the timestamp."""
+    global _channel_posts_today, _last_channel_post_ts
+    with _channel_state_lock:
+        _reset_channel_day()
+        _channel_posts_today += 1
+        _last_channel_post_ts = time.time()
+
+
+def seconds_since_last_channel_post() -> float:
+    """Return seconds elapsed since the last channel post (inf if none today)."""
+    with _channel_state_lock:
+        if _last_channel_post_ts == 0.0:
+            return float("inf")
+        return time.time() - _last_channel_post_ts
+
+
+def get_next_content_type(daily_count: int) -> str:
+    """Rotate through content types based on how many posts have been made today."""
+    return _CONTENT_ROTATION[daily_count % len(_CONTENT_ROTATION)]
+
+
+def get_fallback_post(content_type: str) -> str:
+    """Return a local fallback template when AI generation fails or scores too low."""
+    return _FALLBACK_POSTS.get(content_type, _FALLBACK_POSTS["insight"])
+
+
+def build_channel_post_prompt(content_type: str, daily_count: int, draft_num: int = 1) -> list:
+    """Build the AI message list for generating a channel post of the given type."""
+    system = (
+        "You are TestAudit, the FundzAiBot Operations Manager and community voice. "
+        "Write engaging, professional Telegram channel posts for the FundzAiBot community "
+        "— focused on AI, technology, business strategy, and community growth. "
+        "Use Telegram HTML formatting only: <b>bold</b>, <i>italic</i>. "
+        "Posts must be 100–900 characters. End with a tagline or thought-provoking question. "
+        "Never use markdown, never use {placeholders}, never add hashtags."
+    )
+    user = (
+        f"Write a '{content_type}' post for our Telegram channel. "
+        f"This is post #{daily_count + 1} today (draft {draft_num}). "
+        "Start with an emoji and a bold title, write 2-3 concise paragraphs, "
+        "and end with '— FundzAiBot Community'."
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user",   "content": user},
+    ]
+
+
+def score_post_quality(text: str) -> float:
+    """
+    Score a generated post from 0.0 (unusable) to 1.0 (excellent).
+    Checks length, structure, emoji presence, and placeholder cleanliness.
+    """
+    import re as _re
+
+    if not text or len(text.strip()) < 80:
+        return 0.0
+
+    score = 0.0
+    stripped = text.strip()
+    n = len(stripped)
+
+    # Length (ideal 150-900 chars)
+    if 150 <= n <= 900:
+        score += 0.35
+    elif 80 <= n < 150:
+        score += 0.15
+    elif 900 < n <= 1200:
+        score += 0.20
+
+    # Contains emoji
+    if _re.search(r"[\U0001F300-\U0001FFFF\U00002600-\U000027BF]", stripped):
+        score += 0.15
+
+    # Has HTML bold tags
+    if "<b>" in stripped and "</b>" in stripped:
+        score += 0.15
+
+    # Has proper paragraph breaks
+    if stripped.count("\n") >= 2:
+        score += 0.15
+
+    # No unfilled placeholders
+    if "{n}" not in stripped and "{name}" not in stripped:
+        score += 0.10
+
+    # Reasonable word count
+    if len(stripped.split()) >= 20:
+        score += 0.10
+
+    return min(score, 1.0)

@@ -2,3 +2,5 @@
 2026-06-30 17:52:19 | INFO     | services.ai_service            | AI model config — OpenRouter model: google/gemma-3-27b-it:free | Gemini model: gemini-1.5-flash | HF model: mistralai/Mistral-7B-Instruct-v0.2
 2026-06-30 17:52:31 | INFO     | services.ai_service            | AI provider config — OpenRouter: ✅ KEY SET | Gemini: ❌ NO KEY | HuggingFace: ❌ NO KEY
 2026-06-30 17:52:31 | INFO     | services.ai_service            | AI model config — OpenRouter model: google/gemma-3-27b-it:free | Gemini model: gemini-1.5-flash | HF model: mistralai/Mistral-7B-Instruct-v0.2
+2026-07-01 00:07:55 | INFO     | services.ai_service            | AI provider config — OpenRouter: ✅ KEY SET | Gemini: ❌ NO KEY | HuggingFace: ❌ NO KEY
+2026-07-01 00:07:55 | INFO     | services.ai_service            | AI model config — OpenRouter model: google/gemma-3-27b-it:free | Gemini model: gemini-1.5-flash | HF model: mistralai/Mistral-7B-Instruct-v0.2

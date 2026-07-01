@@ -27,15 +27,18 @@ SUPABASE_URL: str = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 # ── AI Providers ──────────────────────────────────────────────────────────────
+# Provider priority: OpenAI → OpenRouter → Gemini → HuggingFace
+# Set at least ONE key in Railway for AI to work.
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 HUGGINGFACE_API_KEY: str = os.getenv("HUGGINGFACE_API_KEY", "")
 
 # ── AI model names ────────────────────────────────────────────────────────────
-# Default: google/gemma-3-27b-it:free — free, stable, no credits required on OpenRouter.
-# Fallback chain: google/gemma-3-27b-it:free → meta-llama/llama-3.3-70b-instruct:free
-#                 → mistralai/mistral-small-3.1-24b-instruct:free
-# Override with OPENROUTER_MODEL env var in Railway if you want a different model.
+# OpenAI: gpt-4o-mini is the recommended default (cheap, fast, capable).
+# Override with OPENAI_MODEL env var in Railway.
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# OpenRouter: free models — no credits required. Override with OPENROUTER_MODEL.
 # WARNING: "openai/gpt-3.5-turbo" causes HTTP 404 on OpenRouter — do NOT use it.
 OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")

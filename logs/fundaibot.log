@@ -20,3 +20,6 @@
 2026-07-01 00:47:35 | INFO     | services.constitution          | 📜 Fundz Company Constitution v2.1.0 (effective 2026-07-01) loaded
 2026-07-01 00:47:36 | INFO     | services.ai_service            | AI provider config — OpenRouter: ✅ KEY SET | Gemini: ❌ NO KEY | HuggingFace: ❌ NO KEY
 2026-07-01 00:47:36 | INFO     | services.ai_service            | AI model config — OpenRouter model: google/gemma-3-27b-it:free | Gemini model: gemini-1.5-flash | HF model: mistralai/Mistral-7B-Instruct-v0.2
+2026-07-01 00:54:00 | INFO     | services.constitution          | 📜 Fundz Company Constitution v2.1.0 (effective 2026-07-01) loaded
+2026-07-01 00:54:01 | INFO     | services.ai_service            | AI provider config — OpenAI: ✅ KEY SET | OpenRouter: ✅ KEY SET | Gemini: ❌ NO KEY | HuggingFace: ❌ NO KEY
+2026-07-01 00:54:01 | INFO     | services.ai_service            | AI model config — OpenAI: gpt-4o-mini | OpenRouter: google/gemma-3-27b-it:free | Gemini: gemini-1.5-flash | HF: mistralai/Mistral-7B-Instruct-v0.2

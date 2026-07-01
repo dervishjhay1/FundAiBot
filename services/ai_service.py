@@ -1,6 +1,6 @@
 """
 FundAiBot — Multi-provider AI chat service.
-Priority: OpenRouter → Gemini → HuggingFace.
+Priority: OpenAI → OpenRouter → Gemini → HuggingFace.
 Graceful fallback if any provider is missing or fails.
 
 All functions are SYNCHRONOUS — call them via run_in_executor from async handlers.
@@ -10,25 +10,32 @@ import time
 import requests
 
 from config.settings import (
+    OPENAI_API_KEY,
     OPENROUTER_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY,
-    OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL,
+    OPENAI_MODEL, OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL,
     BOT_NAME, AI_TIMEOUT,
 )
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+_OPENAI_URL      = "https://api.openai.com/v1/chat/completions"
+_OPENROUTER_URL  = "https://openrouter.ai/api/v1/chat/completions"
+_GEMINI_BASE     = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # ── Startup provider diagnostics ──────────────────────────────────────────────
 # Logged once at import time so Railway logs show provider state on every boot.
-log.info("AI provider config — OpenRouter: %s | Gemini: %s | HuggingFace: %s",
-         "✅ KEY SET" if OPENROUTER_API_KEY else "❌ NO KEY",
-         "✅ KEY SET" if GEMINI_API_KEY     else "❌ NO KEY",
-         "✅ KEY SET" if HUGGINGFACE_API_KEY else "❌ NO KEY")
-log.info("AI model config — OpenRouter model: %s | Gemini model: %s | HF model: %s",
-         OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL)
+log.info(
+    "AI provider config — OpenAI: %s | OpenRouter: %s | Gemini: %s | HuggingFace: %s",
+    "✅ KEY SET" if OPENAI_API_KEY       else "❌ NO KEY",
+    "✅ KEY SET" if OPENROUTER_API_KEY   else "❌ NO KEY",
+    "✅ KEY SET" if GEMINI_API_KEY       else "❌ NO KEY",
+    "✅ KEY SET" if HUGGINGFACE_API_KEY  else "❌ NO KEY",
+)
+log.info(
+    "AI model config — OpenAI: %s | OpenRouter: %s | Gemini: %s | HF: %s",
+    OPENAI_MODEL, OPENROUTER_MODEL, GEMINI_MODEL, HF_CHAT_MODEL,
+)
 
 ENHANCE_PREFIX = (
     "Please respond in a clear, well-structured way. "
@@ -66,6 +73,42 @@ def _retry_request(fn, retries: int = 2, base_delay: float = 1.0):
             log.debug("Retrying in %.1fs…", delay)
             time.sleep(delay)
     raise last_exc
+
+
+# ── OpenAI ───────────────────────────────────────────────────────────────────
+
+def _openai(messages: list[dict], model: str) -> str:
+    if not OPENAI_API_KEY:
+        raise ValueError("no OPENAI_API_KEY")
+
+    def _call():
+        resp = requests.post(
+            _OPENAI_URL,
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "max_tokens": 1500,
+                "temperature": 0.75,
+            },
+            timeout=(10, AI_TIMEOUT),
+        )
+        if resp.status_code == 401:
+            log.warning("OpenAI 401 — invalid API key. Check OPENAI_API_KEY in Railway.")
+        elif resp.status_code == 429:
+            log.warning("OpenAI 429 — rate limit or quota exceeded. Falling back.")
+        elif resp.status_code == 402:
+            log.warning("OpenAI 402 — billing issue. Check your OpenAI account.")
+        elif resp.status_code == 404:
+            log.warning("OpenAI 404 — model '%s' not found. Check OPENAI_MODEL env var.", model)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return (content or "").strip()
+
+    return _retry_request(_call, retries=1)
 
 
 # ── OpenRouter ────────────────────────────────────────────────────────────────
@@ -216,12 +259,13 @@ def get_ai_response(messages: list[dict], model: str = "") -> tuple[str, str]:
     Always call it via asyncio.get_running_loop().run_in_executor() in async handlers.
     """
     if not model:
-        model = OPENROUTER_MODEL
+        model = OPENAI_MODEL if OPENAI_API_KEY else OPENROUTER_MODEL
 
     providers = [
-        ("OpenRouter", lambda: _openrouter(messages, model)),
-        ("Gemini",     lambda: _gemini(messages)),
-        ("HuggingFace",lambda: _huggingface(messages)),
+        ("OpenAI",      lambda: _openai(messages, OPENAI_MODEL)),
+        ("OpenRouter",  lambda: _openrouter(messages, OPENROUTER_MODEL)),
+        ("Gemini",      lambda: _gemini(messages)),
+        ("HuggingFace", lambda: _huggingface(messages)),
     ]
 
     for name, fn in providers:
@@ -277,6 +321,31 @@ def check_provider_health() -> dict[str, str]:
     All network errors are caught and described with actionable notes.
     """
     statuses: dict[str, str] = {}
+
+    # ── OpenAI ────────────────────────────────────────────────────────────────
+    if OPENAI_API_KEY:
+        try:
+            r = requests.get(
+                "https://api.openai.com/v1/models",
+                timeout=8,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            )
+            if r.status_code == 200:
+                statuses["OpenAI"] = f"✅ OK — model: {OPENAI_MODEL}"
+            elif r.status_code == 401:
+                statuses["OpenAI"] = "❌ Invalid API key (401) — re-check OPENAI_API_KEY in Railway"
+            elif r.status_code == 429:
+                statuses["OpenAI"] = "⚠️ Rate limited (429) — quota exceeded"
+            else:
+                statuses["OpenAI"] = f"⚠️ HTTP {r.status_code} — unexpected response"
+        except requests.Timeout:
+            statuses["OpenAI"] = "⚠️ Timeout — check Railway outbound rules"
+        except requests.ConnectionError:
+            statuses["OpenAI"] = "❌ Unreachable — network or DNS error"
+        except Exception as exc:
+            statuses["OpenAI"] = f"❌ {type(exc).__name__}: {str(exc)[:60]}"
+    else:
+        statuses["OpenAI"] = "⬜ Not configured (OPENAI_API_KEY missing)"
 
     # ── OpenRouter ────────────────────────────────────────────────────────────
     if OPENROUTER_API_KEY:

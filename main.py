@@ -568,6 +568,31 @@ def main() -> None:
         log.warning("Could not delete Telegram webhook (non-fatal): %s", _exc)
 
     app = build_app()
+
+    # ── Global asyncio exception handler ─────────────────────────────────────
+    # Catches unhandled exceptions in background asyncio tasks so they are
+    # logged instead of silently killing the task or spamming stderr.
+    import asyncio as _asyncio
+
+    def _task_exception_handler(loop, context):
+        exc = context.get("exception")
+        msg = context.get("message", "unknown asyncio error")
+        if exc is not None:
+            log.error(
+                "Unhandled asyncio task exception: %s — %s",
+                type(exc).__name__, exc,
+                exc_info=exc,
+            )
+        else:
+            log.error("Asyncio error context: %s", msg)
+
+    try:
+        _loop = _asyncio.get_event_loop()
+        _loop.set_exception_handler(_task_exception_handler)
+        log.info("✅ Global asyncio exception handler registered.")
+    except Exception as _exc:
+        log.warning("Could not set asyncio exception handler: %s", _exc)
+
     log.info("Starting Telegram polling — Railway-only production instance.")
     app.run_polling(
         drop_pending_updates=True,

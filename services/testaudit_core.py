@@ -36,6 +36,21 @@ from config.settings import (
 )
 from utils.logger import get_logger
 
+# ── Fundz Company Constitution ────────────────────────────────────────────────
+# TestAudit derives its operational authority from the Constitution.
+# KPI thresholds and compliance checks reference constitutional standards.
+try:
+    from services.constitution import (
+        get_version as _constitution_version,
+        get_mandate as _constitution_mandate,
+        check_compliance as _constitution_check,
+        TESTAUDIT_MANDATE as _MANDATE,
+    )
+    _CONSTITUTION_LOADED = True
+except Exception:
+    _CONSTITUTION_LOADED = False
+    _MANDATE = {"kpis": {"health_score_target": 90.0, "error_rate_threshold": 20}}
+
 log = get_logger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -560,6 +575,14 @@ def start_testaudit_core() -> None:
     if _running:
         log.debug("TestAudit core already running")
         return
+
+    # Log constitutional authority on every startup
+    if _CONSTITUTION_LOADED:
+        log.info("📜 TestAudit operating under: %s", _constitution_version())
+        log.info("📋 TestAudit role: %s", _MANDATE.get("role", "Chief Operations Manager"))
+    else:
+        log.warning("TestAudit: Constitution not loaded — using default KPI thresholds")
+
     _running = True
     _thread  = threading.Thread(target=_monitor_loop, daemon=True, name="testaudit-core")
     _thread.start()

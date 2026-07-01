@@ -154,11 +154,23 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             log.error("[CHAT] STAGE 6 — AI returned empty response: user=%s", uid)
             response = "⚠️ AI returned an empty response. Please try again."
 
-        # ── STAGE 7: Persist conversation ──────────────────────────────────────
-        log.info("[CHAT] STAGE 7 — saving conversation: user=%s", uid)
-        await loop.run_in_executor(None, save_message, uid, "user", prompt)
-        await loop.run_in_executor(None, save_message, uid, "assistant", response)
-        await loop.run_in_executor(None, increment_chat, uid)
+        # ── STAGE 7: Persist conversation (only on successful AI response) ──────
+        log.info("[CHAT] STAGE 7 — saving conversation: user=%s provider=%s", uid, provider)
+        if provider == "none":
+            # All AI providers failed — do NOT pollute conversation history
+            # with the error string. Show a user-friendly message instead.
+            log.warning("[CHAT] STAGE 7 — AI unavailable, skipping history save for user=%s", uid)
+            response = (
+                "🔧 AI service is temporarily unavailable.\n\n"
+                "I'm unable to reach any AI provider right now. "
+                "This is usually resolved automatically within a few minutes.\n\n"
+                "Please try again shortly. If the issue persists, the admin "
+                "has been notified via Railway logs."
+            )
+        else:
+            await loop.run_in_executor(None, save_message, uid, "user", prompt)
+            await loop.run_in_executor(None, save_message, uid, "assistant", response)
+            await loop.run_in_executor(None, increment_chat, uid)
 
         # ── STAGE 8: Send reply ────────────────────────────────────────────────
         log.info("[CHAT] STAGE 8 — sending reply: user=%s chunks=%d", uid, len(chunk_text(response)))

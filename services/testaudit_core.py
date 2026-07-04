@@ -516,13 +516,13 @@ def _notify_ceo_critical(critical_risks: list[dict], health: dict) -> None:
     This implements EOS 5.10 — TestAudit interrupts CEO only for critical events.
     """
     now = time.time()
+    # Filter to risks outside cooldown — do NOT stamp timestamps yet; stamp only after success
     new_risks = []
     for risk in critical_risks:
         rtype = risk.get("type", "unknown")
         last  = _last_alert_ts.get(rtype, 0.0)
         if now - last >= _ALERT_COOLDOWN_SECS:
             new_risks.append(risk)
-            _last_alert_ts[rtype] = now
 
     if not new_risks:
         log.debug("TestAudit: critical risks suppressed by cooldown — no CEO alert sent")
@@ -544,8 +544,14 @@ def _notify_ceo_critical(critical_risks: list[dict], health: dict) -> None:
                 lines.append(f"<i>→ {rec}</i>")
             lines.append("")
         lines.append("<i>Run /testaudit for full diagnostics.</i>")
-        notify_ceo("Critical Risk Alert", "\n".join(lines))
-        log.info("TestAudit: CEO notified of %d critical risk(s)", len(new_risks))
+        sent = notify_ceo("Critical Risk Alert", "\n".join(lines))
+        if sent:
+            # Only record delivery timestamp after confirmed send — prevents muting on failure
+            for risk in new_risks:
+                _last_alert_ts[risk.get("type", "unknown")] = now
+            log.info("TestAudit: CEO notified of %d critical risk(s)", len(new_risks))
+        else:
+            log.warning("TestAudit: CEO alert send failed — will retry next cycle")
     except Exception as exc:
         log.warning("TestAudit._notify_ceo_critical: %s", exc)
 

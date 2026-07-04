@@ -309,8 +309,9 @@ def enhance_prompt(prompt: str) -> str:
         },
         {"role": "user", "content": prompt},
     ]
-    response, _ = get_ai_response(messages)
-    if response and "unavailable" not in response.lower() and len(response) > 5:
+    response, provider = get_ai_response(messages)
+    # Use provider sentinel ("none") to detect total failure — never string-match error messages
+    if provider != "none" and response and len(response) > 5:
         return response
     return prompt
 

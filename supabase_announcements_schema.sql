@@ -14,10 +14,10 @@ CREATE TABLE IF NOT EXISTS announcements (
 );
 
 -- Add schedule_at to existing deployments (safe, idempotent)
-DO $ BEGIN
+DO $schedule_at_migration$ BEGIN
     ALTER TABLE announcements ADD COLUMN schedule_at TIMESTAMPTZ DEFAULT NULL;
 EXCEPTION WHEN duplicate_column THEN NULL;
-END $;
+END $schedule_at_migration$;
 
 -- Index for fast active-announcement lookup
 CREATE INDEX IF NOT EXISTS idx_announcements_active

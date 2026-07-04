@@ -288,9 +288,10 @@ def get_ai_response(messages: list[dict], model: str = "") -> tuple[str, str]:
         except Exception as exc:
             log.error("%s unexpected error: %s — trying next provider", name, exc)
 
-    log.error("All AI providers failed — returning unavailable message to user")
+    log.error("All AI providers failed — returning service degraded message to user")
     return (
-        "⚠️ All AI providers are currently unavailable. Please try again in a moment.",
+        "I'm currently experiencing a service interruption and can't process that request right now. "
+        "Please try again in a moment — the system is working to restore full capability.",
         "none",
     )
 

@@ -8,9 +8,16 @@ CREATE TABLE IF NOT EXISTS announcements (
     photo_url   TEXT         DEFAULT '',
     is_active   BOOLEAN      DEFAULT TRUE,
     set_by      BIGINT       DEFAULT 0,        -- admin user_id who set it (0 = system default)
+    schedule_at TIMESTAMPTZ  DEFAULT NULL,     -- optional future publish time (NULL = publish immediately)
     created_at  TIMESTAMPTZ  DEFAULT NOW(),
     updated_at  TIMESTAMPTZ  DEFAULT NOW()
 );
+
+-- Add schedule_at to existing deployments (safe, idempotent)
+DO $ BEGIN
+    ALTER TABLE announcements ADD COLUMN schedule_at TIMESTAMPTZ DEFAULT NULL;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $;
 
 -- Index for fast active-announcement lookup
 CREATE INDEX IF NOT EXISTS idx_announcements_active

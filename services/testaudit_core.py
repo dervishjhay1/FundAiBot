@@ -72,6 +72,10 @@ _last_check: float = 0.0
 _running:    bool  = False
 _thread:     threading.Thread | None = None
 
+# Alert throttling — only notify CEO once per 2 hours per risk type to prevent spam
+_last_alert_ts: dict[str, float] = {}
+_ALERT_COOLDOWN_SECS = 7200   # 2 hours
+
 # ── Supabase helpers ──────────────────────────────────────────────────────────
 
 _DB_TIMEOUT = (5, 12)
@@ -503,6 +507,49 @@ def get_last_health() -> dict:
     }
 
 
+# ── CEO Critical Alert (throttled) ───────────────────────────────────────────
+
+def _notify_ceo_critical(critical_risks: list[dict], health: dict) -> None:
+    """
+    Send a direct Telegram alert to the CEO when critical risks are detected.
+    Throttled: each risk type is alerted at most once per _ALERT_COOLDOWN_SECS.
+    This implements EOS 5.10 — TestAudit interrupts CEO only for critical events.
+    """
+    now = time.time()
+    new_risks = []
+    for risk in critical_risks:
+        rtype = risk.get("type", "unknown")
+        last  = _last_alert_ts.get(rtype, 0.0)
+        if now - last >= _ALERT_COOLDOWN_SECS:
+            new_risks.append(risk)
+            _last_alert_ts[rtype] = now
+
+    if not new_risks:
+        log.debug("TestAudit: critical risks suppressed by cooldown — no CEO alert sent")
+        return
+
+    try:
+        from services.decision_engine import notify_ceo
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        lines = [
+            f"⚠️ <b>TestAudit — Critical Alert</b>",
+            f"<i>{ts} · Health: {health.get('score', '?')}/100 ({health.get('tier', '?').upper()})</i>",
+            "",
+        ]
+        for risk in new_risks[:3]:
+            lines.append(f"<b>🔴 {risk.get('type', 'unknown').replace('_', ' ').title()}</b>")
+            lines.append(f"{risk.get('description', '')}")
+            rec = risk.get("recommendation", "")
+            if rec:
+                lines.append(f"<i>→ {rec}</i>")
+            lines.append("")
+        lines.append("<i>Run /testaudit for full diagnostics.</i>")
+        notify_ceo("Critical Risk Alert", "\n".join(lines))
+        log.info("TestAudit: CEO notified of %d critical risk(s)", len(new_risks))
+    except Exception as exc:
+        log.warning("TestAudit._notify_ceo_critical: %s", exc)
+
+
 # ── Background Monitor Loop ───────────────────────────────────────────────────
 
 def _monitor_loop() -> None:
@@ -540,6 +587,7 @@ def _do_health_cycle() -> None:
     risks = predict_risks(health)
     if risks:
         critical = [r for r in risks if r["severity"] == "critical"]
+        high     = [r for r in risks if r["severity"] == "high"]
         if critical:
             log.warning(
                 "TestAudit: %d critical risk(s) detected — score=%.1f tier=%s",
@@ -553,6 +601,8 @@ def _do_health_cycle() -> None:
                 confidence=0.9,
                 outcome="pending",
             )
+            # Notify CEO via Telegram for critical risks (throttled to 1 alert per type per 2h)
+            _notify_ceo_critical(critical, health)
         else:
             log_memory(
                 "health_check",
@@ -562,6 +612,16 @@ def _do_health_cycle() -> None:
                 confidence=1.0,
                 outcome="resolved",
             )
+            # Log high-severity risks to memory without interrupting CEO
+            if high:
+                log_memory(
+                    "risk_elevated",
+                    f"Elevated risk: {high[0]['type']} — monitoring",
+                    detail={"score": health["score"], "risks": high},
+                    category="operations",
+                    confidence=0.8,
+                    outcome="pending",
+                )
     else:
         log.debug("TestAudit: health check passed — score=%.1f tier=%s",
                   health["score"], health["tier"])

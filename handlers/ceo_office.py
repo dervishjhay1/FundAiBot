@@ -1,20 +1,20 @@
 """
-FundzAiBot — CEO Office Handler (Phase 2)
+FundzAiBot — CEO Office Handler
 
-Thin async bridge between main.py's _smart_text_handler and the synchronous
-CEO Office service in services/ceo_office.py.
+Thin async bridge between Telegram message events and the synchronous
+CEO Office service (services/ceo_office.py).
 
 Session model:
   • CEO Office is exclusively for admin users (ADMIN_USER_ID + secondary admins).
-  • A session starts when the admin clicks "🏢 CEO Office" in /testaudit, or
-    sends the /ceo_office command.
+  • A session starts via /ceo_office command, "🏢 CEO Office" button in /testaudit,
+    or /schedule_meeting.
   • While a session is active, every private text message routes to TestAudit
     instead of the regular AI chat handler.
-  • Sessions auto-expire after 30 min of idle (mirrored from service layer).
+  • Sessions auto-expire after 30 min of idle.
   • Typing "exit", "quit", or /exit ends the session immediately.
 
 Integration:
-  • main.py calls handle_ceo_message() first; it returns True if handled.
+  • main.py calls handle_ceo_message() first; returns True if handled.
   • callbacks.py routes ceo:open / ceo:exit inline-button presses here.
   • audit.py (testaudit_handler) calls start_ceo_session() from its
     "CEO Office" section callback.
@@ -58,8 +58,8 @@ def start_ceo_session(user_id: int) -> None:
     Activate a CEO Office session for this user.
     Called from:
       • /ceo_office command handler
+      • /schedule_meeting command handler
       • audit callback 'ceo:open'
-      • any other entry-point that wants to hand off to CEO Office
     """
     _active_sessions.add(user_id)
     _session_ts[user_id] = time.time()
@@ -78,45 +78,127 @@ def is_ceo_session_active(user_id: int) -> bool:
     return _session_alive(user_id)
 
 
+# ── Keyboard helper ───────────────────────────────────────────────────────────
+
+def _main_kbd() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("📅 My Agenda",    callback_data="ceo:agenda"),
+        InlineKeyboardButton("📊 Dashboard",    callback_data="audit:dashboard"),
+        InlineKeyboardButton("🚪 Exit",         callback_data="ceo:exit"),
+    ]])
+
+
+def _session_kbd() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("📅 Agenda",       callback_data="ceo:agenda"),
+        InlineKeyboardButton("🚪 Exit Office",  callback_data="ceo:exit"),
+    ]])
+
+
 # ── /ceo_office command handler ───────────────────────────────────────────────
 
 async def ceo_office_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /ceo_office — Opens the CEO Office for the admin.
-    Denied silently for non-admins.
-    """
+    """/ceo_office — Opens the CEO Office for the admin. Silently denied for non-admins."""
     user = update.effective_user
     if not user or not is_admin(user.id):
         return
 
     if _session_alive(user.id):
         await update.message.reply_text(
-            "🏢 <b>CEO Office is already open.</b>\n\n"
-            "Just type — TestAudit is listening.\n"
-            "Send <code>exit</code> to close the session.",
+            "Already in here. Just type — I'm listening.\n"
+            "Send <code>exit</code> when you're done.",
             parse_mode="HTML",
         )
         return
 
     start_ceo_session(user.id)
 
+    await update.message.reply_text(
+        "🏢 <b>CEO Office</b>\n\n"
+        "What do you need?",
+        parse_mode="HTML",
+        reply_markup=_main_kbd(),
+    )
+
+
+# ── /schedule_meeting command handler ─────────────────────────────────────────
+
+async def schedule_meeting_command_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    /schedule_meeting — Opens the CEO Office directly in meeting-scheduling mode.
+    Shows upcoming agenda and prompts to book a new meeting.
+    """
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        return
+
+    # Ensure CEO Office session is active
+    if not _session_alive(user.id):
+        start_ceo_session(user.id)
+
+    # Show current agenda + booking instructions
+    loop = asyncio.get_running_loop()
+    try:
+        from services.meeting_manager import get_upcoming_meetings, format_agenda
+        meetings = await loop.run_in_executor(None, lambda: get_upcoming_meetings(limit=10))
+        agenda_text = format_agenda(meetings)
+    except Exception as exc:
+        log.warning("schedule_meeting_command: could not load agenda: %s", exc)
+        agenda_text = "📅 <b>Meeting Agenda</b>\n\nCould not load meetings right now."
+
     kbd = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚪 Exit CEO Office", callback_data="ceo:exit"),
-        InlineKeyboardButton("📊 /testaudit",      callback_data="audit:dashboard"),
+        InlineKeyboardButton("📅 Refresh Agenda", callback_data="ceo:agenda"),
+        InlineKeyboardButton("🚪 Exit Office",    callback_data="ceo:exit"),
     ]])
 
     await update.message.reply_text(
-        "🏢 <b>CEO Office — Open</b>\n\n"
-        "I'm TestAudit, your Operations Manager. Ask me anything:\n\n"
-        "• Company health &amp; metrics\n"
-        "• Product strategy &amp; roadmap\n"
-        "• Community insights &amp; feedback\n"
-        "• Register a product or bot token\n"
-        "• Or just talk — I'm here\n\n"
-        "<i>Session active (30-min idle timeout). Send <code>exit</code> to close.</i>",
+        f"{agenda_text}\n\n"
+        "—\n"
+        "To schedule a new meeting, just tell me:\n"
+        "<i>\"Schedule a product review for Monday at 3pm\"</i>\n"
+        "<i>\"Book a strategy call for July 15 at 14:00 to discuss the roadmap\"</i>",
         parse_mode="HTML",
         reply_markup=kbd,
     )
+
+
+# ── Agenda callback (ceo:agenda) ──────────────────────────────────────────────
+
+async def handle_agenda_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the 📅 Agenda inline button — shows upcoming meetings."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    user = query.from_user
+    if not user or not is_admin(user.id):
+        return
+
+    loop = asyncio.get_running_loop()
+    try:
+        from services.meeting_manager import get_upcoming_meetings, format_agenda
+        meetings = await loop.run_in_executor(None, lambda: get_upcoming_meetings(limit=10))
+        agenda_text = format_agenda(meetings)
+    except Exception as exc:
+        log.warning("handle_agenda_callback: %s", exc)
+        agenda_text = "Could not load agenda right now. Try again in a moment."
+
+    kbd = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Refresh",       callback_data="ceo:agenda"),
+        InlineKeyboardButton("🚪 Exit Office",   callback_data="ceo:exit"),
+    ]])
+
+    try:
+        await query.edit_message_text(
+            agenda_text,
+            parse_mode="HTML",
+            reply_markup=kbd,
+        )
+    except Exception:
+        await query.message.reply_text(agenda_text, parse_mode="HTML", reply_markup=kbd)
 
 
 # ── Main message handler (called from _smart_text_handler in main.py) ─────────
@@ -146,13 +228,10 @@ async def handle_ceo_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if _session_alive(user_id):
             end_ceo_session(user_id)
             await message.reply_text(
-                "👋 <b>CEO Office closed.</b>\n\n"
-                "You're back in regular mode.\n"
-                "Use /ceo_office or /testaudit → CEO Office to return.",
+                "👋 Office closed. Use /ceo_office to come back.",
                 parse_mode="HTML",
             )
             return True
-        # Not in a session — don't consume the message
         return False
 
     # Not in a CEO Office session → fall through to regular chat
@@ -187,8 +266,7 @@ async def handle_ceo_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as exc:
         log.error("CEO Office processing error for user=%s: %s", user_id, exc)
         await message.reply_text(
-            "⚠️ <b>CEO Office error.</b>\n"
-            "TestAudit hit a temporary issue. Please try again.",
+            "Something went wrong on my end. Give me a moment and try again.",
             parse_mode="HTML",
         )
         return True
@@ -196,17 +274,12 @@ async def handle_ceo_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not response:
         return True
 
-    kbd = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚪 Exit CEO Office", callback_data="ceo:exit"),
-        InlineKeyboardButton("📊 Dashboard",        callback_data="audit:dashboard"),
-    ]])
-
     try:
-        await message.reply_text(response, parse_mode="HTML", reply_markup=kbd)
+        await message.reply_text(response, parse_mode="HTML", reply_markup=_session_kbd())
     except Exception:
         # Fallback: strip markup and retry if Telegram rejects the HTML
         try:
-            await message.reply_text(response, reply_markup=kbd)
+            await message.reply_text(response, reply_markup=_session_kbd())
         except Exception as exc2:
             log.warning("CEO Office reply failed: %s", exc2)
 

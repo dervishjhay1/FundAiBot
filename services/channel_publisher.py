@@ -33,6 +33,7 @@ from services.community_manager import (
     get_fallback_post,
     build_channel_post_prompt,
     score_post_quality,
+    is_duplicate_post,
 )
 
 log = get_logger(__name__)
@@ -268,9 +269,17 @@ async def _publish(bot, channel_id: str | int, text: str) -> bool:
         )
         return False
 
+    # Deduplication gate — never publish the same or near-identical content twice
+    if is_duplicate_post(text):
+        log.warning(
+            "BLOCKED: _publish() detected duplicate/near-duplicate post — "
+            "skipping this cycle to keep the channel fresh."
+        )
+        return False
+
     try:
         await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
-        record_channel_post()
+        record_channel_post(text)          # pass text so fingerprint is recorded
         log.info(
             "Channel post published: channel=%s len=%d daily=%d",
             channel_id, len(text), get_channel_post_today(),

@@ -213,8 +213,30 @@ def build_morning_brief() -> str:
     except Exception:
         pass
 
+    # Today's meetings
+    try:
+        from services.meeting_manager import get_todays_meetings
+        todays = get_todays_meetings()
+        if todays:
+            lines.append("")
+            lines.append("<b>📅 Today's Meetings</b>")
+            for m in todays:
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(m["scheduled_at"])
+                    time_str = dt.strftime("%H:%M UTC")
+                except Exception:
+                    time_str = "?"
+                lines.append(f"  🕐 {time_str} — {m['title']}")
+        else:
+            lines.append("")
+            lines.append("<b>📅 Meetings</b>")
+            lines.append("  No meetings scheduled today")
+    except Exception:
+        pass
+
     lines.append("")
-    lines.append("<i>TestAudit · Chief Operations Intelligence</i>")
+    lines.append("<i>TestAudit · Chief Operations Manager, Fundz Company Ltd.</i>")
     return "\n".join(lines)
 
 

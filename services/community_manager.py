@@ -1114,6 +1114,15 @@ _channel_posts_date: str = ""
 _last_channel_post_ts: float = 0.0
 _channel_state_lock = threading.Lock()
 
+# ── Post deduplication — rolling fingerprint store ─────────────────────────
+# Keeps SHA-256 hashes + normalised leading-100-char slugs of recent posts.
+# Survives bot restarts only within the same process (in-memory).
+# If the bot restarts, the set resets — Supabase persistence is optional.
+_published_hashes: set[str]  = set()   # full SHA-256 of published text
+_published_slugs:  list[str] = []      # normalised first-80-chars of each post
+_DEDUP_WINDOW      = 200               # keep last N fingerprints
+_SLUG_MIN_MATCH    = 60                # min chars that must match to call it a duplicate
+
 _CONTENT_ROTATION = [
     "insight", "tip", "question", "market_update", "motivational",
     "case_study", "news", "strategy", "tool_spotlight", "community_highlight",
@@ -1209,13 +1218,67 @@ def get_channel_post_today() -> int:
         return _channel_posts_today
 
 
-def record_channel_post() -> None:
-    """Increment the daily channel post counter and record the timestamp."""
+def _post_fingerprint(text: str) -> str:
+    """Return SHA-256 hex digest of the normalised post text."""
+    import hashlib
+    normalised = " ".join(text.lower().split())
+    return hashlib.sha256(normalised.encode()).hexdigest()
+
+
+def _post_slug(text: str) -> str:
+    """Return a normalised 80-char prefix used for near-duplicate detection."""
+    import re as _re
+    clean = _re.sub(r"<[^>]+>", "", text)          # strip HTML tags
+    clean = _re.sub(r"\s+", " ", clean).strip().lower()
+    return clean[:80]
+
+
+def is_duplicate_post(text: str) -> bool:
+    """
+    Return True if this text is a duplicate or near-duplicate of a recently
+    published post.  Two layers:
+      1. Exact hash match — catches identical content.
+      2. Slug prefix match — catches content that opens the same way (same title/hook).
+    """
+    fingerprint = _post_fingerprint(text)
+    slug = _post_slug(text)
+
+    with _channel_state_lock:
+        if fingerprint in _published_hashes:
+            return True
+        for prev_slug in _published_slugs:
+            # Check overlap of the leading N chars
+            match_len = sum(
+                1 for a, b in zip(slug[:_SLUG_MIN_MATCH], prev_slug[:_SLUG_MIN_MATCH])
+                if a == b
+            )
+            if match_len >= _SLUG_MIN_MATCH - 5:   # allow 5-char tolerance
+                return True
+    return False
+
+
+def record_channel_post(text: str = "") -> None:
+    """
+    Increment the daily channel post counter, record the timestamp,
+    and fingerprint the published text to prevent future duplicates.
+    """
     global _channel_posts_today, _last_channel_post_ts
     with _channel_state_lock:
         _reset_channel_day()
         _channel_posts_today += 1
         _last_channel_post_ts = time.time()
+
+        if text:
+            fingerprint = _post_fingerprint(text)
+            slug = _post_slug(text)
+            _published_hashes.add(fingerprint)
+            _published_slugs.append(slug)
+            # Keep the rolling window bounded
+            if len(_published_slugs) > _DEDUP_WINDOW:
+                _published_slugs.pop(0)
+            if len(_published_hashes) > _DEDUP_WINDOW:
+                # Can't easily pop from a set — rebuild from slugs list length
+                pass  # hashes are small; tolerate slight growth between restarts
 
 
 def seconds_since_last_channel_post() -> float:
@@ -1236,22 +1299,103 @@ def get_fallback_post(content_type: str) -> str:
     return _FALLBACK_POSTS.get(content_type, _FALLBACK_POSTS["insight"])
 
 
+_CONTENT_TYPE_ANGLES: dict[str, str] = {
+    "insight": (
+        "Share one specific, non-obvious observation about AI, business, or technology "
+        "that you genuinely find interesting right now. Not a trend piece — an actual "
+        "perspective. Something that made you think differently. Be direct and specific."
+    ),
+    "tip": (
+        "Share one concrete, immediately actionable tip about using AI tools, building "
+        "a business, or working smarter. Not generic advice — something specific that "
+        "actually makes a measurable difference. Show the before/after if you can."
+    ),
+    "question": (
+        "Ask the community one genuine, open-ended question about AI, business strategy, "
+        "or how people are building things. A question you actually want answered — not "
+        "a rhetorical one. Something that starts a real conversation."
+    ),
+    "market_update": (
+        "Write about a real shift happening in the AI or tech landscape right now. "
+        "Not a press release — your read on what it actually means for people building "
+        "products. Include your honest take on whether it matters or not."
+    ),
+    "motivational": (
+        "Write something that actually gives people energy — not hollow corporate "
+        "inspiration, but a real observation about what separates people who build "
+        "things from people who just talk about them. Make it earned, not preachy."
+    ),
+    "case_study": (
+        "Describe a real-world example (company, team, or person) where AI created "
+        "a genuine business outcome — or failed to. Keep it specific. Explain the "
+        "mechanics, not just the result. What actually happened and why?"
+    ),
+    "news": (
+        "React to something real happening in AI or tech this week. Not a summary — "
+        "your actual take. What does it mean? Who benefits? What's overhyped? "
+        "Be honest even if your view is contrarian."
+    ),
+    "strategy": (
+        "Share one strategic insight about how to build, grow, or operate a business "
+        "in the AI era. Specific and opinionated — not a list of best practices. "
+        "What would you actually do, and why?"
+    ),
+    "tool_spotlight": (
+        "Write about one specific AI capability or tool (including FundzAiBot features) "
+        "and what it actually unlocks for people. Not a feature spec — show a real "
+        "use case with context. Why does this matter right now?"
+    ),
+    "community_highlight": (
+        "Write something warm and genuine about the community — acknowledge the kind "
+        "of people here and what makes this worth being part of. Not a thank-you "
+        "template — something that feels like it came from a real person who cares."
+    ),
+}
+
+
 def build_channel_post_prompt(content_type: str, daily_count: int, draft_num: int = 1) -> list:
-    """Build the AI message list for generating a channel post of the given type."""
-    system = (
-        "You are TestAudit, the FundzAiBot Operations Manager and community voice. "
-        "Write engaging, professional Telegram channel posts for the FundzAiBot community "
-        "— focused on AI, technology, business strategy, and community growth. "
-        "Use Telegram HTML formatting only: <b>bold</b>, <i>italic</i>. "
-        "Posts must be 100–900 characters. End with a tagline or thought-provoking question. "
-        "Never use markdown, never use {placeholders}, never add hashtags."
+    """
+    Build the AI message list for generating a channel post of the given type.
+
+    The goal is content that reads like a real, experienced operations manager
+    wrote it — original, specific, and with a genuine point of view.
+    Not AI-sounding, not templated, not generic.
+    """
+    angle = _CONTENT_TYPE_ANGLES.get(
+        content_type,
+        _CONTENT_TYPE_ANGLES["insight"],
     )
+
+    system = """\
+You are writing a Telegram channel post for Fundz Company Ltd. — a real post from \
+a real business that helps people use AI tools, grow their businesses, and build smarter.
+
+You write the way an experienced, opinionated operations manager writes — direct, \
+specific, and with a clear point of view. Not corporate. Not generic. Not inspirational \
+filler. You have something real to say and you say it clearly.
+
+WRITING RULES — follow these exactly:
+1. Write in first person ("I've been thinking about...", "Something I noticed...", \
+"This week I saw...") OR write as the company voice, never as "AI".
+2. Every post must have a specific angle — not "AI is changing everything" but \
+"Here's the one thing most teams get wrong when adopting AI tools."
+3. Never start with a hollow opener: no "In today's fast-paced world", no \
+"Are you ready to...?", no "Let's talk about..."
+4. Never end with "— FundzAiBot Community" or any robotic tagline.
+5. Formatting: use Telegram HTML only — <b>bold</b> for titles/key phrases, \
+<i>italic</i> for emphasis. Never markdown. Never hashtags. Never {placeholders}.
+6. Length: 120–850 characters. Tight and readable — no padding.
+7. If using an emoji, put it before the bold title. One emoji max.
+8. Do NOT sound like an AI wrote this. Sound like a person who thinks for a living."""
+
     user = (
-        f"Write a '{content_type}' post for our Telegram channel. "
-        f"This is post #{daily_count + 1} today (draft {draft_num}). "
-        "Start with an emoji and a bold title, write 2-3 concise paragraphs, "
-        "and end with '— FundzAiBot Community'."
+        f"Write a channel post with this focus: {angle}\n\n"
+        f"Content type: {content_type}. "
+        f"Today's post number: {daily_count + 1}. "
+        f"Draft variant: {draft_num} — make this one distinctly different if multiple drafts are requested. "
+        "Write the post only — no explanations, no preamble."
     )
+
     return [
         {"role": "system", "content": system},
         {"role": "user",   "content": user},

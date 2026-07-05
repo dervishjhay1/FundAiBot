@@ -10,6 +10,11 @@ Enhancement: Multi-draft generation with quality scoring.
 4. Fall back to local template if both AI calls fail
 
 Runs as asyncio.create_task() background loop (Railway-safe).
+
+HOTFIX (EOS 2.1.0): Added provider sentinel check and channel guard phrases
+to permanently prevent AI service error messages from reaching the public channel.
+Root cause: get_ai_response() returns provider="none" on total failure but the
+string was truthy and passed length/quality checks undetected.
 """
 
 from __future__ import annotations
@@ -55,6 +60,45 @@ _DRAFT_COUNT = 2
 
 _running = False
 
+# ── Channel Guard — phrases that must NEVER appear in published content ──────
+# These are AI provider error/fallback messages. Any response containing these
+# phrases is treated as a failed generation and silently discarded.
+# This is a defense-in-depth layer on top of the provider sentinel check.
+_CHANNEL_GUARD_PHRASES: tuple[str, ...] = (
+    "service interruption",
+    "can't process that request",
+    "cannot process that request",
+    "experiencing a service",
+    "restore full capability",
+    "ai unavailable",
+    "provider unavailable",
+    "system is working to restore",
+    "try again in a moment",
+    "temporarily unavailable",
+    "i'm currently experiencing",
+    "i am currently experiencing",
+    "api error",
+    "connection failed",
+    "request failed",
+    "internal server error",
+)
+
+
+def _is_channel_safe(text: str) -> bool:
+    """
+    Return True only if the text is safe to publish to the public channel.
+    Rejects any response that contains AI error/fallback phrases.
+    This is the final gate — called before every publish.
+    """
+    lower = text.lower()
+    for phrase in _CHANNEL_GUARD_PHRASES:
+        if phrase in lower:
+            log.warning(
+                "Channel guard blocked post containing forbidden phrase: %r", phrase
+            )
+            return False
+    return True
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -88,7 +132,13 @@ async def _generate_single_draft(
     draft_num: int,
     loop: asyncio.AbstractEventLoop,
 ) -> tuple[str, float]:
-    """Generate one AI draft and return (text, quality_score)."""
+    """Generate one AI draft and return (text, quality_score).
+
+    Returns ("", 0.0) on any failure including:
+    - All AI providers unavailable (provider sentinel == "none")
+    - Response fails length or channel safety checks
+    - Any exception during generation
+    """
     from services.ai_service import get_ai_response
 
     messages = build_channel_post_prompt(content_type, daily_count, draft_num)
@@ -97,7 +147,29 @@ async def _generate_single_draft(
             None,
             lambda: get_ai_response(messages),
         )
-        if not response:
+
+        # CRITICAL: Check provider sentinel FIRST.
+        # When all AI providers fail, get_ai_response() returns provider="none"
+        # with a human-readable error string that looks like valid text.
+        # Do NOT let this string reach the quality scorer or the channel.
+        if provider == "none":
+            log.warning(
+                "Draft %d skipped — all AI providers unavailable (provider=none). "
+                "No content will be published this cycle.",
+                draft_num,
+            )
+            return "", 0.0
+
+        if not response or not response.strip():
+            log.debug("Draft %d skipped — empty response from %s", draft_num, provider)
+            return "", 0.0
+
+        # Channel safety guard — reject error/fallback phrases
+        if not _is_channel_safe(response):
+            log.warning(
+                "Draft %d from %s failed channel safety guard — discarded",
+                draft_num, provider,
+            )
             return "", 0.0
 
         ok, reason = _length_check(response)
@@ -106,7 +178,10 @@ async def _generate_single_draft(
             return "", 0.0
 
         score = score_post_quality(response)
-        log.debug("Draft %d scored %.2f via %s (type=%s)", draft_num, score, provider, content_type)
+        log.debug(
+            "Draft %d scored %.2f via %s (type=%s)",
+            draft_num, score, provider, content_type,
+        )
         return response.strip(), score
 
     except Exception as exc:
@@ -118,6 +193,7 @@ async def _generate_best_post(content_type: str, daily_count: int) -> str | None
     """
     Generate multiple drafts, score them, return the best one.
     Falls back to local template if AI fails or scores too low.
+    Returns None if no publishable content can be produced — caller must skip.
     """
     loop = asyncio.get_running_loop()
 
@@ -140,11 +216,19 @@ async def _generate_best_post(content_type: str, daily_count: int) -> str | None
             best_score = score
 
     if best_text and best_score >= _MIN_QUALITY_SCORE:
-        log.info(
-            "Publishing best draft (score=%.2f, type=%s, daily#%d)",
-            best_score, content_type, daily_count + 1,
-        )
-        return best_text
+        # Final channel safety check before returning
+        if not _is_channel_safe(best_text):
+            log.error(
+                "Best draft failed final channel safety check (score=%.2f) — "
+                "falling back to local template",
+                best_score,
+            )
+        else:
+            log.info(
+                "Publishing best draft (score=%.2f, type=%s, daily#%d)",
+                best_score, content_type, daily_count + 1,
+            )
+            return best_text
 
     if best_text and best_score > 0:
         log.warning(
@@ -154,6 +238,16 @@ async def _generate_best_post(content_type: str, daily_count: int) -> str | None
 
     # Fallback: local template
     fallback = get_fallback_post(content_type)
+
+    # Apply channel safety check to fallback templates too
+    if not _is_channel_safe(fallback):
+        log.error(
+            "Fallback template for type=%s failed channel safety check — "
+            "skipping post cycle entirely",
+            content_type,
+        )
+        return None
+
     ok, reason = _length_check(fallback)
     if ok:
         log.info("Using fallback template for type=%s", content_type)
@@ -166,6 +260,14 @@ async def _generate_best_post(content_type: str, daily_count: int) -> str | None
 # ── Publisher ──────────────────────────────────────────────────────────────────
 
 async def _publish(bot, channel_id: str | int, text: str) -> bool:
+    # Final safety gate — never publish error/fallback text to the public channel
+    if not _is_channel_safe(text):
+        log.error(
+            "BLOCKED: _publish() received text that failed channel safety guard. "
+            "This text will NOT be sent to the channel. Internal logging only."
+        )
+        return False
+
     try:
         await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
         record_channel_post()
@@ -183,6 +285,11 @@ async def run_channel_publisher(bot) -> None:
     """
     Long-running background task.
     Started once via asyncio.create_task() in post_init.
+
+    Fail-safe policy:
+    - If content generation fails → skip this cycle, retry next scheduled interval
+    - If channel publish fails → log internally, do NOT retry immediately
+    - NEVER publish AI error messages, fallback strings, or placeholder text
     """
     global _running
 
@@ -230,6 +337,13 @@ async def run_channel_publisher(bot) -> None:
 
             if text:
                 await _publish(bot, TELEGRAM_CHANNEL_ID, text)
+            else:
+                # No valid content this cycle — skip silently, retry next interval
+                log.info(
+                    "No publishable content generated for type=%s daily#%d — "
+                    "skipping this cycle, will retry next interval",
+                    content_type, daily_count + 1,
+                )
 
             delay = _next_post_delay()
             log.info(

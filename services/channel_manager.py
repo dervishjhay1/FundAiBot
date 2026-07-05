@@ -39,6 +39,37 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 
+# ── Channel Guard — phrases that must NEVER appear in published content ───────
+_CHANNEL_GUARD_PHRASES: tuple[str, ...] = (
+    "service interruption",
+    "can't process that request",
+    "cannot process that request",
+    "experiencing a service",
+    "restore full capability",
+    "ai unavailable",
+    "provider unavailable",
+    "system is working to restore",
+    "try again in a moment",
+    "temporarily unavailable",
+    "i'm currently experiencing",
+    "i am currently experiencing",
+    "api error",
+    "connection failed",
+    "request failed",
+    "internal server error",
+)
+
+
+def _is_channel_safe(text: str) -> bool:
+    """Return True only if the text is safe to publish to the public channel."""
+    lower = text.lower()
+    for phrase in _CHANNEL_GUARD_PHRASES:
+        if phrase in lower:
+            log.warning("Channel guard blocked post containing forbidden phrase: %r", phrase)
+            return False
+    return True
+
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 _POSTS_TARGET_MIN    = 10      # minimum posts per day
@@ -522,7 +553,7 @@ def _try_product_ai_content(product: dict) -> dict | None:
         )
         if r.status_code == 200:
             content = r.json()["choices"][0]["message"]["content"].strip()
-            if content and len(content) > 80:
+            if content and len(content) > 80 and _is_channel_safe(content):
                 return {
                     "category": "ecosystem_update",
                     "title":    f"Product-{product['product_id']}-{int(time.time())}",
@@ -574,7 +605,7 @@ def _try_ai_content(category: str) -> dict | None:
         )
         if r.status_code == 200:
             content = r.json()["choices"][0]["message"]["content"].strip()
-            if content and len(content) > 80:
+            if content and len(content) > 80 and _is_channel_safe(content):
                 return {"category": category, "title": f"AI-{category}-{int(time.time())}", "text": content}
     except Exception as exc:
         log.debug("channel_manager._try_ai_content: %s", exc)
@@ -582,8 +613,17 @@ def _try_ai_content(category: str) -> dict | None:
 
 
 def _post_to_channel(text: str) -> int | None:
-    """Send post to channel. Returns message_id on success."""
+    """Send post to channel. Returns message_id on success.
+    Final safety gate: never publishes error/fallback text to the public channel.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        return None
+    # Absolute last-resort guard before any text hits the wire
+    if not _is_channel_safe(text):
+        log.error(
+            "BLOCKED: _post_to_channel() received unsafe text — "
+            "NOT sending to channel. Internal logging only."
+        )
         return None
     try:
         r = requests.post(

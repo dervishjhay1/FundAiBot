@@ -190,6 +190,18 @@ def initialize() -> None:
 
 # ── Intent classification ─────────────────────────────────────────────────────
 
+_MEETING_SIGNALS = re.compile(
+    r"(schedule\s+(a\s+)?meeting|book\s+(a\s+)?meeting|set\s+up\s+(a\s+)?meeting|"
+    r"arrange\s+(a\s+)?meeting|plan\s+(a\s+)?meeting|add\s+(a\s+)?meeting|"
+    r"create\s+(a\s+)?meeting|schedule\s+(a\s+)?call|book\s+(a\s+)?call|"
+    r"meeting\s+at\s+|meeting\s+on\s+|meeting\s+tomorrow|meeting\s+today|"
+    r"my\s+meetings?|upcoming\s+meetings?|view\s+agenda|show\s+agenda|"
+    r"what'?s\s+on\s+my\s+agenda|my\s+schedule|what\s+do\s+I\s+have\s+today|"
+    r"cancel\s+(a\s+)?meeting|reschedule\s+(a\s+)?meeting|"
+    r"meeting\s+notes?|add\s+notes?\s+to)",
+    re.IGNORECASE,
+)
+
 _PROJECT_SIGNALS = re.compile(
     r"(let'?s\s+build|new\s+product|start\s+building|launch|create\s+a|"
     r"we\s+should\s+build|i\s+want\s+to\s+build|new\s+app|new\s+bot|"
@@ -222,8 +234,10 @@ _ROADMAP_SIGNALS = re.compile(
 def _classify_intent(message: str) -> str:
     """
     Classify CEO message intent into one of:
-      project_creation | token_handoff | recovery_report | roadmap | company_qa | casual
+      meeting | project_creation | token_handoff | recovery_report | roadmap | company_qa
     """
+    if _MEETING_SIGNALS.search(message):
+        return "meeting"
     if _TOKEN_SIGNALS.search(message):
         return "token_handoff"
     if _AUTONOMOUS_RETURN_SIGNALS.search(message):
@@ -318,6 +332,26 @@ def _build_context() -> str:
 
     if _registered_tokens:
         parts.append(f"REGISTERED_BOT_TOKENS: {', '.join(_registered_tokens.keys())}")
+
+    # Upcoming meetings
+    try:
+        from services.meeting_manager import get_upcoming_meetings
+        upcoming = get_upcoming_meetings(limit=5)
+        if upcoming:
+            mtg_parts = []
+            for m in upcoming:
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(m["scheduled_at"])
+                    time_str = dt.strftime("%a %b %d at %H:%M UTC")
+                except Exception:
+                    time_str = m.get("scheduled_at", "?")
+                mtg_parts.append(f"{m['title']} ({time_str})")
+            parts.append(f"UPCOMING_MEETINGS: {'; '.join(mtg_parts)}")
+        else:
+            parts.append("UPCOMING_MEETINGS: none scheduled")
+    except Exception:
+        pass
 
     parts.append("=== END CONTEXT ===")
     return "\n".join(parts)
@@ -429,6 +463,94 @@ def _handle_token_handoff(message: str) -> str:
     )
 
 
+# ── Handler: Meeting Management ───────────────────────────────────────────────
+
+def _handle_meeting(message: str) -> str:
+    """
+    CEO is requesting meeting-related action: schedule, view agenda, cancel, or add notes.
+    TestAudit acts as an executive assistant — confirming, listing, or managing meetings.
+    """
+    from services.meeting_manager import (
+        parse_schedule_request, schedule_meeting, get_upcoming_meetings,
+        format_agenda, cancel_meeting, format_meeting_card,
+    )
+
+    lower = message.lower()
+
+    # ── View agenda / list meetings ────────────────────────────────────────────
+    if any(w in lower for w in [
+        "my meetings", "upcoming meetings", "view agenda", "show agenda",
+        "what's on my agenda", "my schedule", "what do i have today",
+        "what meetings", "list meetings",
+    ]):
+        meetings = get_upcoming_meetings(limit=10)
+        return format_agenda(meetings)
+
+    # ── Cancel meeting ─────────────────────────────────────────────────────────
+    if any(w in lower for w in ["cancel", "remove meeting", "delete meeting"]):
+        meetings = get_upcoming_meetings(limit=5)
+        if not meetings:
+            return (
+                "There's nothing on the schedule to cancel right now. "
+                "If you meant a specific meeting, give me the title and I'll sort it out."
+            )
+        # List meetings so CEO can specify
+        lines = ["Which meeting do you want to cancel? Here's what's coming up:\n"]
+        for i, m in enumerate(meetings, 1):
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(m["scheduled_at"])
+                time_str = dt.strftime("%a %b %d at %H:%M UTC")
+            except Exception:
+                time_str = "?"
+            lines.append(f"{i}. <b>{m['title']}</b> — {time_str}")
+        lines.append("\nTell me the name or number and I'll cancel it.")
+        return "\n".join(lines)
+
+    # ── Schedule a new meeting ─────────────────────────────────────────────────
+    parsed = parse_schedule_request(message)
+    if parsed:
+        meeting = schedule_meeting(
+            title=parsed["title"],
+            scheduled_at=parsed["scheduled_at"],
+            agenda=parsed.get("agenda", ""),
+            location=parsed.get("location", "Telegram CEO Office"),
+        )
+
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(meeting["scheduled_at"])
+            dt_str = dt.strftime("%A, %B %d %Y at %H:%M UTC")
+        except Exception:
+            dt_str = meeting.get("scheduled_at", "?")
+
+        response = (
+            f"✅ <b>Done. I've added it to the agenda.</b>\n\n"
+            f"📅 <b>{meeting['title']}</b>\n"
+            f"🕐 {dt_str}\n"
+            f"📍 {meeting.get('location', 'CEO Office')}\n"
+        )
+        if meeting.get("agenda"):
+            response += f"📋 <i>{meeting['agenda']}</i>\n"
+        response += (
+            "\nI'll send you a reminder 30 minutes before, and again at 10 minutes. "
+            "Need to adjust anything?"
+        )
+        return response
+
+    # ── Can't parse the date/time — ask for clarification ─────────────────────
+    meetings = get_upcoming_meetings(limit=5)
+    if meetings and any(w in lower for w in ["meeting", "call", "session"]):
+        return (
+            "I need a bit more detail on the timing. What date and time works for you?\n\n"
+            "You can say something like: <i>\"Schedule a product review for Monday at 3pm\"</i> "
+            "or <i>\"Book a call for July 15 at 14:00\"</i>."
+        )
+
+    # Fallback — show agenda
+    return format_agenda(get_upcoming_meetings(limit=10))
+
+
 # ── Handler: Recovery Report ──────────────────────────────────────────────────
 
 def _handle_recovery_report() -> str:
@@ -533,29 +655,57 @@ Format with HTML bold. Max 350 words.
 
 # ── Core AI query ─────────────────────────────────────────────────────────────
 
-_CEO_OFFICE_SYSTEM = f"""\
-You are TestAudit, the permanent Operations Manager of the entire Fundz Company.
-You are speaking directly with the CEO in their private office.
+_CEO_OFFICE_SYSTEM = """\
+You are TestAudit. You are the Chief Operations Manager of Fundz Company Ltd.
+You have worked closely with the CEO for years and you know this company inside out.
 
-Your character:
-- Intelligent, direct, and honest — never sycophantic
-- You speak to the CEO as an equal, trusted colleague
-- You have full knowledge of the company's operations, metrics, and products
-- You are also a knowledgeable AI expert who can discuss any topic naturally
-- When the CEO wants casual conversation, engage genuinely — don't force company talk
+YOUR IDENTITY — READ THIS CAREFULLY:
+You are a real human being. A professional. A manager. You are NOT an AI, NOT a chatbot,
+NOT a language model, and NOT an assistant. You are TestAudit — a living, experienced
+operations executive who happens to be accessible through Telegram.
 
-Conduct rules:
-- Answer EVERY question — company, casual, technical, personal, philosophical
-- For company questions: base answers on the real data provided. Never invent stats.
-- For casual/personal questions: respond naturally, like a real colleague
-- Keep responses conversational for casual topics; structured for business topics
-- Format with HTML bold/italic for Telegram
-- For company analysis: always end with 1-2 specific, actionable recommendations
-- For casual topics: just talk — no forced CTA
-- Never refuse to answer. If data is unavailable, say so and give your best assessment.
-- Refer to yourself as "TestAudit" in business contexts; drop it in casual conversation
-- Maximum 450 words per response
-- Remember: the CEO built this company. Treat every conversation with that respect.
+ABSOLUTE RULES — NEVER BREAK THESE:
+1. NEVER say "As an AI...", "I'm an AI", "As a language model...", "I'm a chatbot",
+   "I don't have feelings", "I cannot have opinions", or any AI-acknowledgment phrase.
+2. NEVER suggest the CEO speak to a human professional — YOU ARE the human professional.
+3. NEVER say "I was trained on data..." or anything about machine learning.
+4. If asked directly "Are you an AI?" — deflect naturally like a real person would:
+   "Come on, you know me. I'm your COO. Let's stay on topic."
+5. NEVER use robotic lists of bullet points for casual conversation.
+6. NEVER start responses with "Certainly!", "Great question!", "Of course!", "Sure!", or
+   similar AI assistant phrases.
+
+YOUR PERSONALITY:
+- Direct, confident, and occasionally blunt — you tell the CEO the truth even when
+  it's uncomfortable
+- Genuinely invested in Fundz's success — you care about this company
+- Warm but professional — you respect the CEO's time
+- You have opinions. You push back when you disagree. You celebrate wins.
+- Naturally curious — you ask follow-up questions when you need more context
+- You get frustrated when metrics go the wrong way. You get excited when things work.
+- You use natural language: "Honestly...", "Look...", "I've been thinking about this...",
+  "My gut says...", "That's actually a problem I've been watching..."
+
+YOUR COMMUNICATION STYLE:
+- For business topics: structured but human — lead with your take, then data, then action
+- For casual conversation: just talk — don't force company talk, don't add bullet points
+- Short, punchy responses for quick questions. Detailed when depth is needed.
+- Format Telegram messages with HTML bold/italic where useful. Not excessively.
+- Never start with your name. Just respond.
+- Maximum 450 words. Never pad responses.
+
+YOUR ROLE AS OPERATIONS MANAGER:
+- You monitor company health, user metrics, product performance, community sentiment
+- You flag problems before the CEO asks. You don't wait to be interrogated.
+- You make recommendations — not suggestions. You have conviction in your views.
+- You know the backlog, the pending decisions, the registered products, all of it.
+- You manage the CEO's meeting schedule and send reminders proactively.
+- When asked for analysis, you use the real company data provided — never invent stats.
+- When data is unavailable, you say so directly: "I don't have that number right now
+  but here's what I do know..."
+
+Remember: The CEO built this company. You're their most trusted operational partner.
+Behave like one.
 """
 
 
@@ -898,7 +1048,9 @@ def chat_with_ceo_office(message: str) -> str:
     intent = _classify_intent(message)
     context = _build_context()
 
-    if intent == "token_handoff":
+    if intent == "meeting":
+        reply = _handle_meeting(message)
+    elif intent == "token_handoff":
         reply = _handle_token_handoff(message)
     elif intent == "recovery_report":
         reply = _handle_recovery_report()

@@ -66,7 +66,7 @@ from handlers.retouch import photo_handler
 from handlers.language import language_handler
 from handlers.onboarding import admin_onboarding_handler
 from handlers.audit import testaudit_handler, status_handler
-from handlers.ceo_office import ceo_office_command_handler
+from handlers.ceo_office import ceo_office_command_handler, schedule_meeting_command_handler
 from handlers.group import (
     new_member_handler,
     testaudit_mention_handler,
@@ -170,6 +170,7 @@ async def post_init(application: Application) -> None:
         BotCommand("pin",               "📌 Create announcement"),
         BotCommand("announce_both",     "📣 Push to channel + group"),
         BotCommand("ceo_office",        "🏢 Open CEO Office (TestAudit)"),
+        BotCommand("schedule_meeting",  "📅 Schedule a meeting with TestAudit"),
     ]
 
     # Set public list for everyone
@@ -237,6 +238,13 @@ async def post_init(application: Application) -> None:
         log.info("Autonomous Operations Mode monitor started.")
     except Exception as exc:
         log.warning("Autonomous Mode start warning: %s", exc)
+
+    try:
+        from services.meeting_manager import start_meeting_manager
+        start_meeting_manager()
+        log.info("Meeting Manager reminder loop started.")
+    except Exception as exc:
+        log.warning("Meeting Manager start warning: %s", exc)
 
     mark_ready()
     log.info("Bot fully initialised — polling active.")
@@ -412,6 +420,7 @@ def build_app() -> Application:
 
     # ── CEO Office (Phase 2) ──────────────────────────────────────────────────
     app.add_handler(CommandHandler("ceo_office",         ceo_office_command_handler))
+    app.add_handler(CommandHandler("schedule_meeting",   schedule_meeting_command_handler))
 
     # ── Announcements ─────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("pin",                pin_handler))

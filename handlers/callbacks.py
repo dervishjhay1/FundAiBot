@@ -146,6 +146,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await ceo_office_command_handler(update, context)
             return
 
+        if action == "agenda":
+            from handlers.ceo_office import handle_agenda_callback
+            await handle_agenda_callback(update, context)
+            return
+
         await query.answer()
         return
 

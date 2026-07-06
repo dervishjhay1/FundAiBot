@@ -29,6 +29,7 @@ import json
 import re
 import time
 import threading
+import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -457,10 +458,14 @@ def _handle_meeting(message: str) -> str:
     CEO is requesting meeting-related action: schedule, view agenda, cancel, or add notes.
     TestAudit acts as an executive assistant — confirming, listing, or managing meetings.
     """
-    from services.meeting_manager import (
-        parse_schedule_request, schedule_meeting, get_upcoming_meetings,
-        format_agenda, cancel_meeting, format_meeting_card,
-    )
+    try:
+        from services.meeting_manager import (
+            parse_schedule_request, schedule_meeting, get_upcoming_meetings,
+            format_agenda, cancel_meeting, format_meeting_card,
+        )
+    except Exception as exc:
+        log.error("ceo_office._handle_meeting import failed: %s\n%s", exc, traceback.format_exc())
+        return _query_ai(message, _build_context())
 
     lower = message.lower()
 
@@ -1020,26 +1025,50 @@ def chat_with_ceo_office(message: str) -> str:
             return reply
 
     # ── Intent routing ────────────────────────────────────────────────────────
-    intent = _classify_intent(message)
-    context = _build_context()
+    try:
+        intent = _classify_intent(message)
+        log.debug("ceo_office: intent=%s message_len=%d", intent, len(message))
+    except Exception as exc:
+        log.error("ceo_office._classify_intent failed: %s\n%s", exc, traceback.format_exc())
+        intent = "company_qa"
 
-    if intent == "meeting":
-        reply = _handle_meeting(message)
-    elif intent == "token_handoff":
-        reply = _handle_token_handoff(message)
-    elif intent == "recovery_report":
-        reply = _handle_recovery_report()
-    elif intent == "project_creation":
-        reply = _handle_project_creation(message, context)
-    elif intent == "roadmap":
-        reply = _handle_roadmap(message, context)
-    else:
-        # General company Q&A or casual conversation
-        reply = _query_ai(message, context)
+    try:
+        context = _build_context()
+    except Exception as exc:
+        log.error("ceo_office._build_context failed: %s\n%s", exc, traceback.format_exc())
+        context = "Context unavailable."
+
+    try:
+        if intent == "meeting":
+            reply = _handle_meeting(message)
+        elif intent == "token_handoff":
+            reply = _handle_token_handoff(message)
+        elif intent == "recovery_report":
+            reply = _handle_recovery_report()
+        elif intent == "project_creation":
+            reply = _handle_project_creation(message, context)
+        elif intent == "roadmap":
+            reply = _handle_roadmap(message, context)
+        else:
+            reply = _query_ai(message, context)
+    except Exception as exc:
+        log.error(
+            "ceo_office handler crash (intent=%s): %s\n%s",
+            intent, exc, traceback.format_exc(),
+        )
+        # Last-resort: try plain AI with no context
+        try:
+            reply = _query_ai(message, "Company context unavailable right now.")
+        except Exception as exc2:
+            log.error("ceo_office _query_ai last-resort also failed: %s", exc2)
+            return "One sec — having a technical issue. Try again."
 
     # Store turn in history
-    _update_history("user", message)
-    _update_history("assistant", reply)
+    try:
+        _update_history("user", message)
+        _update_history("assistant", reply)
+    except Exception as exc:
+        log.error("ceo_office._update_history failed: %s\n%s", exc, traceback.format_exc())
 
     return reply
 

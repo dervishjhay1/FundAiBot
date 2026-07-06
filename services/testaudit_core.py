@@ -632,6 +632,159 @@ def _do_health_cycle() -> None:
         log.debug("TestAudit: health check passed — score=%.1f tier=%s",
                   health["score"], health["tier"])
 
+    # Check pending seller applications every cycle (non-blocking)
+    try:
+        _check_seller_applications()
+    except Exception as exc:
+        log.debug("_check_seller_applications: %s", exc)
+
+
+# ── Seller Application Monitoring (FundzMarket integration) ──────────────────
+
+def get_pending_seller_applications(limit: int = 20) -> list[dict]:
+    """
+    Fetch pending seller applications from FundzMarket's seller_applications table.
+    Returns list of applications awaiting CEO/admin review.
+    """
+    r = _sb_get("seller_applications", {
+        "status": "eq.pending",
+        "order":  "created_at.desc",
+        "limit":  str(limit),
+    })
+    if r and r.status_code == 200:
+        return r.json()
+    return []
+
+
+def get_seller_application_stats() -> dict:
+    """
+    Return a summary of seller application status counts.
+    Used by TestAudit health monitoring and CEO Office context.
+    """
+    stats = {"pending": 0, "approved": 0, "rejected": 0, "total": 0}
+    for status in ("pending", "approved", "rejected"):
+        r = _sb_get("seller_applications", {
+            "status": f"eq.{status}",
+            "select": "id",
+        })
+        if r and r.status_code == 200:
+            count = len(r.json())
+            stats[status] = count
+            stats["total"] += count
+    return stats
+
+
+def approve_seller_application(application_id: str, reviewed_by: int = 0) -> bool:
+    """
+    Approve a seller application. Updates status and sets reviewed_at timestamp.
+    Returns True on success.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return False
+    try:
+        hdrs = dict(_hdrs())
+        hdrs["Prefer"] = "return=representation"
+        r = requests.patch(
+            f"{SUPABASE_URL}/rest/v1/seller_applications?id=eq.{application_id}",
+            headers=hdrs,
+            json={
+                "status":       "approved",
+                "reviewed_by":  reviewed_by,
+                "reviewed_at":  datetime.now(timezone.utc).isoformat(),
+            },
+            timeout=_DB_TIMEOUT,
+        )
+        if r.status_code in (200, 204):
+            log_memory(
+                "seller_approved",
+                f"Seller application {application_id} approved",
+                detail={"application_id": application_id, "reviewed_by": reviewed_by},
+                category="marketplace",
+                confidence=1.0,
+                outcome="resolved",
+            )
+            return True
+    except Exception as exc:
+        log.warning("approve_seller_application: %s", exc)
+    return False
+
+
+def reject_seller_application(application_id: str, reason: str = "", reviewed_by: int = 0) -> bool:
+    """
+    Reject a seller application with an optional reason.
+    Returns True on success.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return False
+    try:
+        hdrs = dict(_hdrs())
+        hdrs["Prefer"] = "return=representation"
+        r = requests.patch(
+            f"{SUPABASE_URL}/rest/v1/seller_applications?id=eq.{application_id}",
+            headers=hdrs,
+            json={
+                "status":       "rejected",
+                "reject_reason": reason,
+                "reviewed_by":  reviewed_by,
+                "reviewed_at":  datetime.now(timezone.utc).isoformat(),
+            },
+            timeout=_DB_TIMEOUT,
+        )
+        if r.status_code in (200, 204):
+            log_memory(
+                "seller_rejected",
+                f"Seller application {application_id} rejected",
+                detail={"application_id": application_id, "reason": reason},
+                category="marketplace",
+                confidence=1.0,
+                outcome="resolved",
+            )
+            return True
+    except Exception as exc:
+        log.warning("reject_seller_application: %s", exc)
+    return False
+
+
+def _check_seller_applications() -> None:
+    """
+    Check for new pending seller applications and notify CEO if any are waiting.
+    Called from the background monitor loop. Throttled via normal CEO alert mechanism.
+    """
+    try:
+        apps = get_pending_seller_applications(limit=5)
+        if not apps:
+            return
+        # Only alert if there are unreviewed applications pending
+        count = len(apps)
+        log.info("TestAudit: %d pending seller application(s) waiting for review", count)
+        log_memory(
+            "seller_applications_pending",
+            f"{count} seller application(s) awaiting review",
+            detail={"count": count, "ids": [a.get("id") for a in apps]},
+            category="marketplace",
+            confidence=1.0,
+            outcome="pending",
+        )
+        # Queue as CEO approval item if not already queued
+        for app in apps[:3]:
+            app_id  = app.get("id", "?")
+            user_id = app.get("user_id", "?")
+            name    = app.get("store_name") or app.get("business_name") or f"User {user_id}"
+            queue_ceo_approval(
+                action_type="seller_application_review",
+                title=f"Seller Application: {name}",
+                description=(
+                    f"FundzMarket seller application from user {user_id} is pending review. "
+                    f"Store name: {name}. "
+                    f"Submitted: {app.get('created_at', '?')[:10]}."
+                ),
+                payload={"application_id": app_id, "user_id": user_id, "store_name": name},
+                confidence=1.0,
+                risk_level="low",
+            )
+    except Exception as exc:
+        log.debug("_check_seller_applications: %s", exc)
+
 
 # ── Start / Stop ──────────────────────────────────────────────────────────────
 

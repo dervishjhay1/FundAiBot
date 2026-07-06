@@ -61,21 +61,37 @@ _BUILTIN_PRODUCTS: list[dict] = [
         "product_id":         "fundzmarket",
         "name":               "FundzMarket",
         "description": (
-            "Digital marketplace for AI prompts, templates, courses, and tools. "
-            "Creators sell. Buyers discover and grow."
+            "Fundz Company's official Telegram marketplace for buying, selling, and "
+            "discovering products across Africa. Phase 1 Foundation is LIVE — "
+            "product listings, 18 categories, enterprise database, user registration, "
+            "9-step listing wizard, search, wishlist, moderation queue, safety centre, "
+            "and the complete enterprise architecture. Phase 2 (escrow, FundzPay, "
+            "wallet, orders, delivery) is in planning."
         ),
-        "target_audience":    "Digital creators, prompt engineers, AI learners, digital buyers",
-        "status":             "planned",
+        "target_audience":    "African buyers and sellers — electronics, phones, fashion, "
+                              "digital products, services, real estate, vehicles, and more",
+        "status":             "active",
+        "phase":              "Phase 1 — Foundation",
+        "github":             "https://github.com/dervishjhay1/FundzMarket",
         "features": [
-            "Creator digital storefront",
-            "AI prompt & template marketplace",
-            "Secure digital delivery",
-            "Creator revenue analytics",
-            "Integrated payments",
+            "🛍 Browse Products — 18 categories, full search",
+            "➕ Sell Product — 9-step guided listing wizard",
+            "👤 My Account — profile, stats, listings, wallet-ready",
+            "❤️ Wishlist — save products for later",
+            "🔔 Notifications — product approvals, announcements",
+            "🔍 Search — keyword, category, price, location",
+            "🛡 Safety Centre — tips, rules, fraud reporting",
+            "💬 Support — direct CEO/admin escalation",
+            "⚙️ Settings — language, notifications, privacy",
+            "🗄 Enterprise DB — 13-table Supabase schema for millions of users",
+            "⏳ Phase 2 planned: Escrow, FundzPay, Wallet, Delivery Tracking",
         ],
-        "channel_categories": ["feature", "creator_spotlight", "ecosystem_update"],
+        "channel_categories": ["ecosystem_update", "feature", "milestone"],
         "cross_promote_with": ["fundzaibot", "fundz_academy"],
-        "launched_at":        None,
+        "launched_at":        "2026-07-06",
+        "launch_phase":       "Phase 1 Foundation v1.0.0",
+        "railway_service":    "FundzMarket (separate Railway service)",
+        "bot_username":       "FundzMarketBot",
     },
     {
         "product_id":         "fundz_academy",

@@ -264,10 +264,12 @@ async def handle_ceo_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             None, lambda: chat_with_ceo_office(text)
         )
     except Exception as exc:
-        log.error("CEO Office processing error for user=%s: %s", user_id, exc)
+        log.error(
+            "CEO Office processing error for user=%s: %s\n%s",
+            user_id, exc, __import__("traceback").format_exc(),
+        )
         await message.reply_text(
-            "Something went wrong on my end. Give me a moment and try again.",
-            parse_mode="HTML",
+            "One sec — something glitched on my end. Send that again.",
         )
         return True
 

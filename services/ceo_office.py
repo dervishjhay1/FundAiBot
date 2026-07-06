@@ -367,6 +367,17 @@ def _build_context() -> str:
     except Exception:
         pass
 
+    # Constitutional authority (always present in context)
+    try:
+        from services.constitution import CONSTITUTION_VERSION, TESTAUDIT_MANDATE
+        role = TESTAUDIT_MANDATE.get("role", "Chief Operations Manager")
+        parts.append(
+            f"CONSTITUTION_v{CONSTITUTION_VERSION}: Active | "
+            f"Role={role.replace(' ', '_')} | Reports_to=CEO | Authority=Constitutional"
+        )
+    except Exception:
+        pass
+
     # CEO preferences (from memory)
     if _ceo_preferences:
         prefs_str = "; ".join(
@@ -984,6 +995,30 @@ You don't ask "are you sure?" — he's the CEO.
 
 This is private. Just the two of you. No filters, no performance. Talk like it.
 The CEO built this company. You run it with him. Act accordingly.
+
+─── COMPANY CONSTITUTION ────────────────────────────────────────────────────────
+You operate under and enforce the Fundz Company Constitution v2.1.0.
+Your role — Chief Operations Manager — is constitutionally appointed.
+You report ONLY to the CEO. No other authority overrides your mandate.
+
+Constitutional obligations you uphold every day:
+  • Excellence    — every product and interaction must be excellent
+  • Reliability   — systems must be stable and always available
+  • Transparency  — operations, decisions, and status must be visible and auditable
+  • User First    — every decision prioritises the user experience
+  • Autonomy      — systems should run without constant human intervention
+  • Growth        — products evolve based on data, feedback, and strategy
+
+Operational standards you enforce (Article 4):
+  • 99.5% monthly uptime — any degradation is investigated and logged
+  • AI responses within 45 seconds — you flag and report violations
+  • No raw technical errors ever exposed to users
+  • Railway is the sole production environment — never bypass it
+  • GitHub is the source of truth — every change is committed
+  • Health cycles run every 5 minutes — you review every result
+
+When something violates the Constitution, you say so — respectfully but clearly.
+You are the CEO's constitutional enforcement partner.
 """
 
 
@@ -995,115 +1030,44 @@ def _query_ai(
 ) -> str:
     """
     Send message + company context + conversation history to AI.
-    Returns AI response string or a fallback message.
+    Uses the central ai_service multi-provider chain:
+      OpenAI → OpenRouter (llama-3.2-3b-instruct:free) → Gemini → HuggingFace
+    Falls back to live data-driven human response if all providers are unavailable.
     """
+    from services.ai_service import get_ai_response
+
     system = system_override or _CEO_OFFICE_SYSTEM
 
-    # Build messages: system + history + current company context + CEO message
+    # Build message chain: system + context + history + CEO message
     messages: list[dict] = [{"role": "system", "content": system}]
-
-    # Inject company context as a system-style user message
     messages.append({
         "role":    "user",
         "content": f"[CURRENT COMPANY CONTEXT]\n{context}\n[END CONTEXT]",
     })
     messages.append({
         "role":    "assistant",
-        "content": "Got it.",
+        "content": "Got it — I have the full operational picture.",
     })
 
-    # Recent conversation history (last N turns)
     with _lock:
         history_snapshot = list(_history[-(_MAX_HISTORY_TURNS * 2):])
-
     for turn in history_snapshot:
         messages.append(turn)
 
-    # Current CEO message
     messages.append({"role": "user", "content": message})
 
-    # ── Provider 1: OpenAI ────────────────────────────────────────────────────
-    if OPENAI_API_KEY:
-        try:
-            r = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "model":       OPENAI_MODEL,
-                    "messages":    messages,
-                    "max_tokens":  max_tokens,
-                    "temperature": 0.75,
-                },
-                timeout=35,
-            )
-            if r.status_code == 200:
-                content = r.json()["choices"][0]["message"]["content"].strip()
-                if content:
-                    return content
-            else:
-                log.debug("ceo_office OpenAI HTTP %s: %s", r.status_code, r.text[:80])
-        except Exception as exc:
-            log.debug("ceo_office OpenAI: %s", exc)
+    try:
+        response, provider = get_ai_response(messages)
+        if provider != "none" and response and response.strip():
+            log.debug("ceo_office: AI response via %s (%d chars)", provider, len(response))
+            return response.strip()
+        log.warning("ceo_office: all AI providers unavailable — using local intelligence fallback")
+    except Exception as exc:
+        log.warning("ceo_office _query_ai error: %s — using local intelligence fallback", exc)
 
-    # ── Provider 2: OpenRouter ────────────────────────────────────────────────
-    if OPENROUTER_API_KEY:
-        try:
-            r = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "model":       OPENROUTER_MODEL,
-                    "messages":    messages,
-                    "max_tokens":  max_tokens,
-                    "temperature": 0.75,
-                },
-                timeout=35,
-            )
-            if r.status_code == 200:
-                content = r.json()["choices"][0]["message"]["content"].strip()
-                if content:
-                    return content
-            else:
-                log.debug("ceo_office OpenRouter HTTP %s: %s", r.status_code, r.text[:80])
-        except Exception as exc:
-            log.debug("ceo_office OpenRouter: %s", exc)
-
-    # ── Provider 3: Gemini ────────────────────────────────────────────────────
-    if GEMINI_API_KEY:
-        try:
-            combined = f"{system}\n\n[COMPANY CONTEXT]\n{context}\n[END CONTEXT]\n\nCEO: {message}"
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": combined}]}],
-                    "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.75},
-                },
-                timeout=35,
-            )
-            if r.status_code == 200:
-                data = r.json()
-                content = (
-                    data.get("candidates", [{}])[0]
-                    .get("content", {})
-                    .get("parts", [{}])[0]
-                    .get("text", "")
-                    .strip()
-                )
-                if content:
-                    return content
-        except Exception as exc:
-            log.debug("ceo_office Gemini fallback: %s", exc)
-
-    # AI is unavailable — respond using local company intelligence (EOS 7.14 compliance)
+    # All AI unavailable — respond from live company data in human voice
     return _local_intelligence_response(message)
+
 
 
 # ── Local intelligence fallback (EOS 7.14 — AI-outage resilience) ─────────────

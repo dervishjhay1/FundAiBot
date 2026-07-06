@@ -674,6 +674,36 @@ def get_seller_application_stats() -> dict:
     return stats
 
 
+
+def _send_fundzmarket_dm(telegram_id: int, text: str) -> bool:
+    """
+    Send a Telegram DM to a FundzMarket user via the FundzMarket bot token.
+    Requires FUNDZMARKET_BOT_TOKEN to be set in Railway environment variables.
+    Silent no-op if the token is not configured.
+    """
+    try:
+        from config.settings import FUNDZMARKET_BOT_TOKEN
+        if not FUNDZMARKET_BOT_TOKEN:
+            log.debug("_send_fundzmarket_dm: FUNDZMARKET_BOT_TOKEN not set — skipping notification")
+            return False
+        r = requests.post(
+            f"https://api.telegram.org/bot{FUNDZMARKET_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id":    telegram_id,
+                "text":       text,
+                "parse_mode": "HTML",
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            log.info("FundzMarket DM sent: telegram_id=%d", telegram_id)
+            return True
+        log.warning("_send_fundzmarket_dm: HTTP %s — %s", r.status_code, r.text[:80])
+    except Exception as exc:
+        log.warning("_send_fundzmarket_dm: %s", exc)
+    return False
+
+
 def approve_seller_application(application_id: str, reviewed_by: int = 0) -> bool:
     """
     Approve a seller application. Updates status and sets reviewed_at timestamp.
@@ -703,6 +733,27 @@ def approve_seller_application(application_id: str, reviewed_by: int = 0) -> boo
                 confidence=1.0,
                 outcome="resolved",
             )
+            # Notify the seller via FundzMarket bot
+            try:
+                app_rows = []
+                if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                    import requests as _req
+                    _r = _req.get(
+                        f"{SUPABASE_URL}/rest/v1/seller_applications"
+                        f"?id=eq.{application_id}&select=user_id,store_name",
+                        headers=_hdrs(), timeout=_DB_TIMEOUT,
+                    )
+                    app_rows = _r.json() if _r.status_code == 200 else []
+                if app_rows:
+                    app = app_rows[0]
+                    msg = (
+                        f"🎉 <b>Congratulations! Your seller application has been approved.</b>\n\n"
+                        f"Your store <b>{app.get('store_name', 'your store')}</b> is now live on FundzMarket.\n\n"
+                        f"Tap <b>➕ Sell Product</b> to list your first product!"
+                    )
+                    _send_fundzmarket_dm(app["user_id"], msg)
+            except Exception as _exc:
+                log.debug("Seller approval notification: %s", _exc)
             return True
     except Exception as exc:
         log.warning("approve_seller_application: %s", exc)
@@ -739,6 +790,32 @@ def reject_seller_application(application_id: str, reason: str = "", reviewed_by
                 confidence=1.0,
                 outcome="resolved",
             )
+            # Notify the seller via FundzMarket bot
+            try:
+                app_rows = []
+                if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                    import requests as _req
+                    _r = _req.get(
+                        f"{SUPABASE_URL}/rest/v1/seller_applications"
+                        f"?id=eq.{application_id}&select=user_id,store_name",
+                        headers=_hdrs(), timeout=_DB_TIMEOUT,
+                    )
+                    app_rows = _r.json() if _r.status_code == 200 else []
+                if app_rows:
+                    app = app_rows[0]
+                    reason_text = reason.strip() if reason else "Application did not meet our current requirements."
+                    msg = (
+                        f"❌ <b>Seller application update</b>\n\n"
+                        f"Unfortunately, your application for <b>{app.get('store_name', 'your store')}</b> "
+                        f"was not approved at this time.\n\n"
+                        f"<b>Reason:</b> {reason_text}\n\n"
+                        f"<b>What to do next:</b>\n"
+                        f"Review the feedback above, make the necessary changes, and re-apply by "
+                        f"tapping <b>➕ Sell Product</b> in FundzMarket."
+                    )
+                    _send_fundzmarket_dm(app["user_id"], msg)
+            except Exception as _exc:
+                log.debug("Seller rejection notification: %s", _exc)
             return True
     except Exception as exc:
         log.warning("reject_seller_application: %s", exc)

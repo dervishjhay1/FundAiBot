@@ -114,8 +114,14 @@ async def ceo_office_command_handler(update: Update, context: ContextTypes.DEFAU
     start_ceo_session(user.id)
 
     await update.message.reply_text(
-        "🏢 <b>CEO Office</b>\n\n"
-        "What do you need?",
+        "🏢 <b>CEO Office — TestAudit</b>\n\n"
+        "Morning. I'm here — what do you need?\n\n"
+        "You can:\n"
+        "• Ask me anything about the company\n"
+        "• Say <code>CEO broadcast your message</code> to send to all users\n"
+        "• <code>schedule meeting</code> to book a session\n"
+        "• Just talk — I'll respond\n\n"
+        "<i>Send <code>exit</code> when done.</i>",
         parse_mode="HTML",
         reply_markup=_main_kbd(),
     )
@@ -234,9 +240,23 @@ async def handle_ceo_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return True
         return False
 
-    # Not in a CEO Office session → fall through to regular chat
+    # If admin is in private chat without an active CEO Office session,
+    # auto-activate so they can talk to TestAudit naturally without /ceo_office.
+    # The session will expire after 30 minutes of idle as usual.
     if not _session_alive(user_id):
-        return False
+        # Only auto-activate if this looks like a message TO TestAudit
+        # (not a command or very short message that might be for something else)
+        text_lower = text.lower()
+        _TESTAUDIT_TRIGGERS = (
+            "testaudit", "test audit", "manager", "audit", "status", "report",
+            "broadcast", "announce", "meeting", "schedule", "dashboard", "ceo",
+            "how is", "what is", "check", "review", "approve", "reject", "sell",
+        )
+        if any(t in text_lower for t in _TESTAUDIT_TRIGGERS) or len(text) > 30:
+            start_ceo_session(user_id)
+            log.info("CEO Office: auto-activated session for admin=%s", user_id)
+        else:
+            return False  # Short/ambiguous message → fall through to regular AI chat
 
     # ── Active session ─────────────────────────────────────────────────────────
 

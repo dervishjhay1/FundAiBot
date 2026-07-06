@@ -20,6 +20,7 @@ load_dotenv()
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+FUNDZMARKET_BOT_TOKEN: str = os.getenv("FUNDZMARKET_BOT_TOKEN", "")  # FundzMarket Telegram bot token — for sending user notifications
 ADMIN_USER_ID: int = int(os.getenv("ADMIN_USER_ID", "0"))
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ HUGGINGFACE_API_KEY: str = os.getenv("HUGGINGFACE_API_KEY", "")
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 # OpenRouter: free models — no credits required. Override with OPENROUTER_MODEL.
 # WARNING: "openai/gpt-3.5-turbo" causes HTTP 404 on OpenRouter — do NOT use it.
-OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 HF_CHAT_MODEL: str = os.getenv("HF_CHAT_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
 

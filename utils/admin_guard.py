@@ -31,7 +31,7 @@ def admin_only(func):
     """
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        from services.admin_manager import is_admin
+        from config.settings import is_admin
         user = update.effective_user
         if not user:
             return
@@ -41,7 +41,6 @@ def admin_only(func):
             )
             if update.callback_query:
                 await update.callback_query.answer("⛔ Access denied.", show_alert=True)
-            # No message sent — do not reveal admin feature existence to regular users
             return
         return await func(update, context)
     return wrapper
@@ -50,11 +49,10 @@ def admin_only(func):
 def owner_only(func):
     """
     Decorator: drop the request if the caller is not the permanent owner.
-    Replies with a brief owner-only notice (only visible to the caller).
     """
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        from services.admin_manager import is_owner
+        from config.settings import is_owner
         user = update.effective_user
         if not user:
             return

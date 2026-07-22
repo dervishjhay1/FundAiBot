@@ -522,70 +522,15 @@ async def handle_setmodel_callback(query, uid: int) -> None:
     log.info("Model set: user=%s model=%s", uid, model_id)
 
 
-# ── /testbroadcast (admin only) ───────────────────────────────────────────────
+# ── /testbroadcast (removed — announcements moved to Headquarters) ──────────
 
 async def testbroadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /testbroadcast — Preview the active announcement in the admin's own DM.
-    Shows exactly what users will see before you push it live.
-    """
+    """Stub: announcement management has moved to Fundz Company Headquarters."""
     user = update.effective_user
     if not user or not is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
-
-    from services.database import get_active_announcement
-    from handlers.announcements import format_announcement_card, SUPPORT_URL
-    from utils.keyboards import announcement_keyboard
-
-    loop = asyncio.get_running_loop()
-    ann  = await loop.run_in_executor(None, get_active_announcement)
-
-    if not ann:
-        await update.effective_message.reply_text(
-            "📭 <b>No active announcement to preview.</b>\n\n"
-            "Create one with <code>/pin &lt;message&gt;</code> first.",
-            parse_mode="HTML",
-        )
-        return
-
-    card      = format_announcement_card(ann.get("message", ""))
-    photo_url = ann.get("photo_url") or ""
-
     await update.effective_message.reply_text(
-        "👁️ <b>Announcement Preview</b>\n"
-        "<i>This is exactly how it appears to users:</i>",
+        "📢 Announcement management has moved to <b>Fundz Company Headquarters</b>.",
         parse_mode="HTML",
+        reply_markup=back_to_menu(),
     )
-
-    try:
-        if photo_url:
-            await context.bot.send_photo(
-                chat_id=user.id,
-                photo=photo_url,
-                caption=card,
-                parse_mode="HTML",
-                reply_markup=announcement_keyboard(SUPPORT_URL),
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=user.id,
-                text=card,
-                parse_mode="HTML",
-                reply_markup=announcement_keyboard(SUPPORT_URL),
-            )
-        await update.effective_message.reply_text(
-            "✅ <b>Preview sent!</b>\n\n"
-            "Happy with it? Push live with:\n"
-            "• /announce_channel — channel only\n"
-            "• /announce_group — group only\n"
-            "• /announce_both — both at once",
-            parse_mode="HTML",
-            reply_markup=back_to_menu(),
-        )
-    except Exception as exc:
-        await update.effective_message.reply_text(
-            f"❌ Preview failed: <code>{html.escape(str(exc))}</code>",
-            parse_mode="HTML",
-        )
-    log.info("/testbroadcast admin=%s", user.id)

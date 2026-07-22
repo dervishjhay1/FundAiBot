@@ -313,26 +313,10 @@ async def handle_onboarding_continue(query, context: ContextTypes.DEFAULT_TYPE) 
     # Show active announcement if any
     try:
         ann = await loop.run_in_executor(None, get_active_announcement)
-        if ann:
-            from handlers.announcements import format_announcement_card
-            from utils.keyboards import announcement_keyboard
-            from services.database import get_announcement_history
-            history   = await loop.run_in_executor(None, lambda: get_announcement_history(limit=10))
-            ann_count = len(history)
-            msg       = ann.get("message", "")
-            photo_url = ann.get("photo_url")
-            card      = format_announcement_card(msg, lang=lang)
-            kbd       = announcement_keyboard(ann_count=ann_count, ann_idx=0)
-            if photo_url:
-                try:
-                    await context.bot.send_photo(
-                        user.id, photo=photo_url, caption=card,
-                        parse_mode="HTML", reply_markup=kbd,
-                    )
-                except Exception:
-                    await context.bot.send_message(user.id, card, parse_mode="HTML", reply_markup=kbd)
-            else:
-                await context.bot.send_message(user.id, card, parse_mode="HTML", reply_markup=kbd)
+        if ann and ann.get("message"):
+            await context.bot.send_message(
+                user.id, f"📢 {ann['message']}", parse_mode="HTML"
+            )
     except Exception as exc:
         log.debug("Announcement after onboarding skipped: %s", exc)
 

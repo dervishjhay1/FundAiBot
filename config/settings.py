@@ -1,15 +1,17 @@
 """
-FundAiBot — Central configuration.
+FundzAiBot — Central configuration.
 All environment variables and constants live here.
 Every other module imports from this file.
 
-DEPLOYMENT POLICY:
-  Telegram polling starts when IS_RAILWAY is True (Railway auto-injects its env vars)
-  OR when ALLOW_POLLING=true is explicitly set in environment variables.
+VERSION 5.0.1 — Ecosystem Restructuring
+  FundzAiBot is now a dedicated AI assistant product.
+  Executive governance has moved to Fundz Company Headquarters.
+  This bot never makes executive decisions.
 
-  ALLOW_POLLING=true is the safe override for Replit testing. It is intentional —
-  use it only when Railway is NOT also running the same token, or you will get
-  Telegram 409 Conflict errors (two instances polling the same bot).
+DEPLOYMENT POLICY:
+  Telegram polling starts ONLY when Railway environment variables are detected (IS_RAILWAY=True).
+  Any non-Railway environment runs Flask keep-alive only.
+  This is a hard architectural boundary — do not bypass it.
 """
 
 import os
@@ -20,7 +22,6 @@ load_dotenv()
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-FUNDZMARKET_BOT_TOKEN: str = os.getenv("FUNDZMARKET_BOT_TOKEN", "")  # FundzMarket Telegram bot token — for sending user notifications
 ADMIN_USER_ID: int = int(os.getenv("ADMIN_USER_ID", "0"))
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
@@ -36,11 +37,7 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 HUGGINGFACE_API_KEY: str = os.getenv("HUGGINGFACE_API_KEY", "")
 
 # ── AI model names ────────────────────────────────────────────────────────────
-# OpenAI: gpt-4o-mini is the recommended default (cheap, fast, capable).
-# Override with OPENAI_MODEL env var in Railway.
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-# OpenRouter: free models — no credits required. Override with OPENROUTER_MODEL.
-# WARNING: "openai/gpt-3.5-turbo" causes HTTP 404 on OpenRouter — do NOT use it.
 OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 HF_CHAT_MODEL: str = os.getenv("HF_CHAT_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
@@ -51,8 +48,9 @@ FLASK_HOST: str = "0.0.0.0"
 
 # ── Bot identity ──────────────────────────────────────────────────────────────
 BOT_NAME: str = "FundzAiBot"
-BOT_VERSION: str = "5.0.0"
+BOT_VERSION: str = "5.0.1"
 BOT_TAGLINE: str = "Your Intelligent AI Assistant"
+BOT_DESCRIPTION: str = "An AI Assistant developed by Fundz Company Ltd."
 
 # ── AI defaults ───────────────────────────────────────────────────────────────
 DEFAULT_AI_MODEL: str = OPENROUTER_MODEL
@@ -98,70 +96,82 @@ RATE_LIMIT_WINDOW: int = 60
 # ── Queue ─────────────────────────────────────────────────────────────────────
 MAX_QUEUE_SIZE: int = 50
 QUEUE_TIMEOUT: int = 120
-MAX_CONCURRENT_TASKS: int = 5
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR: str = os.path.dirname(os.path.dirname(__file__))
-DATA_DIR: str = os.path.join(BASE_DIR, "data")
-LOGS_DIR: str = os.path.join(BASE_DIR, "logs")
+# ── Headquarters integration ──────────────────────────────────────────────────
+# FundzAiBot reports all significant events to Fundz Company Headquarters.
+# Headquarters governs. FundzAiBot never makes executive decisions.
+HQ_API_URL: str = os.getenv("HQ_API_URL", "").rstrip("/")
+HQ_API_KEY: str = os.getenv("HQ_API_KEY", "")
+HQ_SYNC_ENABLED: bool = bool(HQ_API_URL and HQ_API_KEY)
+# Retry policy for offline sync
+HQ_SYNC_MAX_RETRIES: int = int(os.getenv("HQ_SYNC_MAX_RETRIES", "10"))
+HQ_SYNC_RETRY_INTERVAL: int = int(os.getenv("HQ_SYNC_RETRY_INTERVAL", "60"))  # seconds
 
-# ── Onboarding / Community ────────────────────────────────────────────────────
-TELEGRAM_CHANNEL_ID: str   = os.getenv("TELEGRAM_CHANNEL_ID", "-1003695220825")
-TELEGRAM_CHANNEL_URL: str  = os.getenv("TELEGRAM_CHANNEL_URL", "https://t.me/FundzAiChannel")
-TELEGRAM_CHANNEL_NAME: str = os.getenv("TELEGRAM_CHANNEL_NAME", "FundzAi Channel")
+# ── Referral links (sourced from HQ Product Registry) ─────────────────────────
+# FundzAiBot never hardcodes referral links.
+# Official links are fetched from HQ and cached here at runtime.
+# Default values are placeholders — HQ overrides these on startup.
+REFERRAL_LINK: str = os.getenv("REFERRAL_LINK", "")  # set by HQ registry or env
+BOT_DEEP_LINK: str = os.getenv("BOT_DEEP_LINK", "")
 
-TELEGRAM_GROUP_ID: str     = os.getenv("TELEGRAM_GROUP_ID", "-1004297201446")
-TELEGRAM_GROUP_URL: str    = os.getenv("TELEGRAM_GROUP_URL", "https://t.me/FundzAiGroup")
-TELEGRAM_GROUP_NAME: str   = os.getenv("TELEGRAM_GROUP_NAME", "FundzAi Community")
+# ── Telegram community (optional) ─────────────────────────────────────────────
+TELEGRAM_CHANNEL_ID: str = os.getenv("TELEGRAM_CHANNEL_ID", "")
+TELEGRAM_CHANNEL_URL: str = os.getenv("TELEGRAM_CHANNEL_URL", "")
+TELEGRAM_CHANNEL_NAME: str = os.getenv("TELEGRAM_CHANNEL_NAME", "Fundz Channel")
+TELEGRAM_GROUP_ID: str = os.getenv("TELEGRAM_GROUP_ID", "")
+TELEGRAM_GROUP_URL: str = os.getenv("TELEGRAM_GROUP_URL", "")
+TELEGRAM_GROUP_NAME: str = os.getenv("TELEGRAM_GROUP_NAME", "Fundz Community")
+BOT_WEB_URL: str = os.getenv("BOT_WEB_URL", "")
+TELEGRAM_BOT_USERNAME: str = os.getenv("TELEGRAM_BOT_USERNAME", "FundzAiBot")
 
-ONBOARDING_CHANNEL_REWARD_CHAT: int  = int(os.getenv("ONBOARDING_CHANNEL_REWARD_CHAT", "5"))
-ONBOARDING_CHANNEL_REWARD_IMAGE: int = int(os.getenv("ONBOARDING_CHANNEL_REWARD_IMAGE", "1"))
-ONBOARDING_GROUP_REWARD_CHAT: int    = int(os.getenv("ONBOARDING_GROUP_REWARD_CHAT", "5"))
-ONBOARDING_GROUP_REWARD_IMAGE: int   = int(os.getenv("ONBOARDING_GROUP_REWARD_IMAGE", "1"))
+# ── Onboarding ────────────────────────────────────────────────────────────────
 ONBOARDING_REQUIRED: bool = os.getenv("ONBOARDING_REQUIRED", "false").lower() == "true"
+ONBOARDING_CHANNEL_REWARD_CHAT: int = int(os.getenv("ONBOARDING_CHANNEL_REWARD_CHAT", "5"))
+ONBOARDING_CHANNEL_REWARD_IMAGE: int = int(os.getenv("ONBOARDING_CHANNEL_REWARD_IMAGE", "1"))
+ONBOARDING_GROUP_REWARD_CHAT: int = int(os.getenv("ONBOARDING_GROUP_REWARD_CHAT", "5"))
+ONBOARDING_GROUP_REWARD_IMAGE: int = int(os.getenv("ONBOARDING_GROUP_REWARD_IMAGE", "1"))
 
-# ── Membership gate ───────────────────────────────────────────────────────────
-# When True, ALL premium commands (not just /start) require channel+group membership.
-# Set via MEMBERSHIP_GATE_ENABLED=true in Railway env vars.
-MEMBERSHIP_GATE_ENABLED: bool = os.getenv("MEMBERSHIP_GATE_ENABLED", "false").lower() == "true"
-
-# ── Web App / Mini-App ────────────────────────────────────────────────────────
-# Public HTTPS base URL where Flask is accessible (e.g. Railway service URL).
-# Leave empty in Replit — mini-app WebApp button is only shown when set.
-# Example: https://fundzaibot.up.railway.app
-BOT_WEB_URL: str = os.getenv("BOT_WEB_URL", "").rstrip("/")
-
-# ── Deployment environment detection ─────────────────────────────────────────
-#
-# Railway automatically injects these environment variables into every service.
-# None of them will be present in Replit, local dev, or any other platform.
-#
-IS_RAILWAY: bool = bool(
-    os.getenv("RAILWAY_ENVIRONMENT") or      # e.g. "production"
-    os.getenv("RAILWAY_SERVICE_NAME") or     # e.g. "FundzAiBot"
-    os.getenv("RAILWAY_PROJECT_ID") or       # UUID
-    os.getenv("RAILWAY_SERVICE_ID")          # UUID
+# ── Railway detection ─────────────────────────────────────────────────────────
+IS_RAILWAY: bool = (
+    os.getenv("RAILWAY_ENVIRONMENT") is not None
+    or os.getenv("RAILWAY_SERVICE_ID") is not None
+    or os.getenv("IS_RAILWAY", "").lower() == "true"
 )
 
-# ALLOW_POLLING: True on Railway automatically.
-# Set ALLOW_POLLING=true in env vars to enable polling in Replit/local testing.
-# WARNING: Never set this while Railway is also polling the same token —
-# two simultaneous pollers cause Telegram 409 Conflict errors.
-ALLOW_POLLING: bool = IS_RAILWAY or os.getenv("ALLOW_POLLING", "").lower() == "true"
+# Legacy compat shim — kept for any remaining references
+ALLOW_POLLING: bool = IS_RAILWAY
 
-# ── Backward-compatibility alias ──────────────────────────────────────────────
-# services/admin_manager.py and any future modules may reference OWNER_USER_ID.
-# It is identical to ADMIN_USER_ID — the permanent super-admin.
-OWNER_USER_ID: int = ADMIN_USER_ID
+# ── Web search ────────────────────────────────────────────────────────────────
+WEB_SEARCH_ENABLED: bool = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
+WEB_SEARCH_MAX_RESULTS: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
 
-# ── Validation ────────────────────────────────────────────────────────────────
+# ── Voice transcription ────────────────────────────────────────────────────────
+VOICE_ENABLED: bool = os.getenv("VOICE_ENABLED", "true").lower() == "true"
+
+# ── Session secret ─────────────────────────────────────────────────────────────
+SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-railway")
+
+# ── Runtime feature flags ─────────────────────────────────────────────────────
+FEATURE_FLAGS: dict[str, bool] = {
+    "chat_enabled":       True,
+    "image_enabled":      True,
+    "new_users_enabled":  True,
+    "maintenance_mode":   False,
+    "web_search_enabled": WEB_SEARCH_ENABLED,
+    "voice_enabled":      VOICE_ENABLED,
+}
+
+# ── GitHub repository (for metadata) ─────────────────────────────────────────
+GITHUB_REPO: str = "https://github.com/dervishjhay1/FundAiBot"
+
+
 def validate_config() -> list[str]:
-    """Return a list of missing or invalid critical environment variables."""
-    missing = []
+    """Return a list of missing/invalid critical env vars."""
+    missing: list[str] = []
     if not TELEGRAM_BOT_TOKEN:
         missing.append("TELEGRAM_BOT_TOKEN")
-    if not ADMIN_USER_ID or ADMIN_USER_ID == 0:
-        missing.append("ADMIN_USER_ID (must be a non-zero Telegram user ID)")
+    if not ADMIN_USER_ID:
+        missing.append("ADMIN_USER_ID")
     if not SUPABASE_URL:
         missing.append("SUPABASE_URL")
     if not SUPABASE_SERVICE_KEY:
@@ -180,7 +190,9 @@ def require_config() -> None:
 
 
 # ── Multi-admin system ────────────────────────────────────────────────────────
+# Owner has full access. Secondary admins are persisted in Supabase.
 SECONDARY_ADMINS: set[int] = set()
+OWNER_USER_ID: int = ADMIN_USER_ID  # alias
 
 
 def is_owner(user_id: int) -> bool:
@@ -190,26 +202,3 @@ def is_owner(user_id: int) -> bool:
 def is_admin(user_id: int) -> bool:
     uid = int(user_id)
     return (bool(ADMIN_USER_ID) and uid == int(ADMIN_USER_ID)) or uid in SECONDARY_ADMINS
-
-
-# ── Web search ────────────────────────────────────────────────────────────────
-# DuckDuckGo — no API key required. Set WEB_SEARCH_ENABLED=false to disable.
-WEB_SEARCH_ENABLED:     bool = os.getenv("WEB_SEARCH_ENABLED", "true").lower() == "true"
-WEB_SEARCH_MAX_RESULTS: int  = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3"))
-
-# ── Voice transcription ────────────────────────────────────────────────────────
-# Requires GEMINI_API_KEY. Set VOICE_ENABLED=false to disable.
-VOICE_ENABLED: bool = os.getenv("VOICE_ENABLED", "true").lower() == "true"
-
-# ── Session secret (Flask sessions / future use) ──────────────────────────────
-SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-railway")
-
-# ── Runtime feature flags ─────────────────────────────────────────────────────
-FEATURE_FLAGS: dict[str, bool] = {
-    "chat_enabled":       True,
-    "image_enabled":      True,
-    "new_users_enabled":  True,
-    "maintenance_mode":   False,
-    "web_search_enabled": WEB_SEARCH_ENABLED,
-    "voice_enabled":      VOICE_ENABLED,
-}

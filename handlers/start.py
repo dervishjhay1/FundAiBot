@@ -21,6 +21,7 @@ from services.onboarding import get_onboarding, init_onboarding, needs_onboardin
 from services.language import get_string, get_user_language, detect_language, save_user_language, can_use_language
 from utils.keyboards import main_menu, admin_main_menu
 from utils.logger import get_logger
+from services import hq_sync as _hq
 
 log = get_logger(__name__)
 
@@ -40,19 +41,15 @@ def _source_from_args(args: list[str]) -> str:
 
 
 async def _show_announcement(update: Update, context, uid: int) -> None:
-    """
-    Show the active pinned announcement with native Telegram sticky pinning.
-    Uses send_sticky_announcement() which sends the card + pins it.
-    Falls back silently if no announcement or any error.
-    """
+    """Show the active announcement if one exists (silently fails if none)."""
     try:
         from services.database import get_active_announcement
-        from handlers.announcements import send_sticky_announcement
-
         loop = asyncio.get_running_loop()
         ann = await loop.run_in_executor(None, get_active_announcement)
         if ann:
-            await send_sticky_announcement(context.bot, uid, ann, pin=True)
+            msg = ann.get("message", "")
+            if msg:
+                await context.bot.send_message(uid, f"📢 {msg}", parse_mode="HTML")
     except Exception as exc:
         log.debug("Announcement display skipped for user %s: %s", uid, exc)
 
@@ -134,6 +131,20 @@ async def _start_handler_inner(
 
     # Register user if new
     db_user = await loop.run_in_executor(None, lambda: get_or_create_user(uid, **tg_user))
+
+    # ── HQ sync: user registration / returning user ────────────────────────────
+    if is_new:
+        try:
+            _hq.event_user_registered(uid, user.username, {
+                "first_name": user.first_name, "language_code": user.language_code
+            })
+        except Exception:
+            pass
+    else:
+        try:
+            _hq.event_returning_user(uid, user.username)
+        except Exception:
+            pass
 
     # ── Language auto-detection for new users ──────────────────────────────────
     if is_new:
